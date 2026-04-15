@@ -299,10 +299,19 @@ body,
 .sync-stats-grid {
   margin-top: 0.6rem;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.5rem;
   color: #d8e1ef;
   font-size: 0.9rem;
+}
+
+.diagnostic-row {
+  margin-top: 0.45rem;
+  font-size: 0.82rem;
+  color: #b9c5d8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .manual-sync-box {

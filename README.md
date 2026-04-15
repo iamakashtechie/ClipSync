@@ -25,6 +25,11 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
   - Sync counters (sent/received/dropped) in dashboard
   - Manual text + image sync test UI + best-effort clipboard polling
   - Local-network transport scoping (non-local peers are ignored)
+- Phase 5 hardening started:
+  - Deterministic conflict policy with timestamp + sender tie-break
+  - Stale message rejection tracking (`stale_rejected`)
+  - Runtime diagnostics event buffer exposed to UI
+  - Dashboard diagnostics panel for quick field debugging
 
 ## What works right now
 
@@ -37,6 +42,7 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Text payload sync is active for authenticated peers.
 - Image payload sync is active for authenticated peers (manual image path).
 - Sync counters are visible in dashboard.
+- Conflict and stale message decisions are visible via diagnostics.
 
 ## What is not implemented yet
 
@@ -85,10 +91,12 @@ npm run tauri android dev
 10. Confirm device A `Sent` counter increments.
 11. Pick an image in `Manual image sync test` on device A and press `Send Image`.
 12. Confirm device B shows `Last remote image` preview and `Received` increments again.
+13. Trigger rapid repeated sends from both sides and confirm `Stale Rejected` and diagnostics rows update.
 
 ## Notes
 
 - Discovery currently updates backend state; UI polls every 3 seconds to reflect newly discovered peers.
 - Transport handshake is now active and should show status like `authenticated` or `rejected: pairing mismatch` per peer.
 - Text and image sync use authenticated transport and loop-prevention hashing.
+- Conflict resolution now prefers newer timestamp; tie uses sender id ordering for deterministic behavior.
 - Android background clipboard bridge is the next implementation step.

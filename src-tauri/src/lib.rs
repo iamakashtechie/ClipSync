@@ -9,6 +9,7 @@ use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::SystemTime;
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
@@ -26,6 +27,7 @@ const CLIPSYNC_UDP_DISCOVERY_PORT: u16 = 9877;
 struct AppSettings {
     max_image_size_kb: u32,
     pairing_code: String,
+    device_name_override: String,
 }
 
 impl Default for AppSettings {
@@ -33,6 +35,7 @@ impl Default for AppSettings {
         Self {
             max_image_size_kb: 2048,
             pairing_code: "".to_string(),
+            device_name_override: "".to_string(),
         }
     }
 }
@@ -48,8 +51,12 @@ struct AppState {
     sync_sent_count: u64,
     sync_received_count: u64,
     sync_dropped_count: u64,
+    sync_rejected_stale_count: u64,
     pending_remote_text: Option<String>,
     pending_remote_image: Option<IncomingImage>,
+    last_applied_timestamp_ms: u64,
+    last_applied_sender: String,
+    diagnostic_events: VecDeque<String>,
 }
 
 impl Default for AppState {
@@ -65,8 +72,12 @@ impl Default for AppState {
             sync_sent_count: 0,
             sync_received_count: 0,
             sync_dropped_count: 0,
+            sync_rejected_stale_count: 0,
             pending_remote_text: None,
             pending_remote_image: None,
+            last_applied_timestamp_ms: 0,
+            last_applied_sender: "".to_string(),
+            diagnostic_events: VecDeque::new(),
         }
     }
 }
@@ -101,6 +112,15 @@ fn save_settings_to_disk(app: &tauri::AppHandle, settings: &AppSettings) -> Resu
     let path = settings_file_path(app)?;
     let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
     fs::write(path, json).map_err(|e| e.to_string())
+}
+
+fn effective_device_name(settings: &AppSettings, host_name: &str) -> String {
+    let custom = settings.device_name_override.trim();
+    if custom.is_empty() {
+        format!("clipsync-{host_name}")
+    } else {
+        custom.to_string()
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -154,6 +174,36 @@ fn remember_hash(state: &mut AppState, hash: u64) {
     if state.recent_hashes.len() > MAX_RECENT_HASHES {
         state.recent_hashes.pop_front();
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn push_diagnostic(state: &mut AppState, event: String) {
+    const MAX_EVENTS: usize = 120;
+    state.diagnostic_events.push_back(event);
+    if state.diagnostic_events.len() > MAX_EVENTS {
+        state.diagnostic_events.pop_front();
+    }
+}
+
+fn should_accept_incoming(state: &mut AppState, sender_id: &str, timestamp_ms: u64) -> bool {
+    if timestamp_ms > state.last_applied_timestamp_ms {
+        state.last_applied_timestamp_ms = timestamp_ms;
+        state.last_applied_sender = sender_id.to_string();
+        return true;
+    }
+
+    if timestamp_ms == state.last_applied_timestamp_ms && sender_id > state.last_applied_sender.as_str() {
+        state.last_applied_sender = sender_id.to_string();
+        return true;
+    }
+
+    false
 }
 
 fn start_mdns_discovery(state: SharedState, device_name: String) {
@@ -228,11 +278,13 @@ enum TransportMessage {
     },
     SyncText {
         sender_id: String,
+        timestamp_ms: u64,
         message_hash: u64,
         text: String,
     },
     SyncImage {
         sender_id: String,
+        timestamp_ms: u64,
         message_hash: u64,
         mime_type: String,
         image_base64: String,
@@ -311,6 +363,7 @@ async fn handle_incoming_transport_connection(
         if let Ok(Some(Ok(Message::Text(payload)))) = maybe_sync {
             if let Ok(TransportMessage::SyncText {
                 sender_id,
+                timestamp_ms,
                 message_hash,
                 text,
             }) = serde_json::from_str::<TransportMessage>(&payload)
@@ -318,10 +371,15 @@ async fn handle_incoming_transport_connection(
                 if let Ok(mut s) = state.lock() {
                     if s.recent_hashes.contains(&message_hash) {
                         s.sync_dropped_count += 1;
+                        push_diagnostic(&mut s, format!("dropped duplicate text hash={} from {}", message_hash, sender_id));
+                    } else if !should_accept_incoming(&mut s, &sender_id, timestamp_ms) {
+                        s.sync_rejected_stale_count += 1;
+                        push_diagnostic(&mut s, format!("rejected stale text from {} at {}", sender_id, timestamp_ms));
                     } else {
                         remember_hash(&mut s, message_hash);
                         s.pending_remote_text = Some(text);
                         s.sync_received_count += 1;
+                        push_diagnostic(&mut s, format!("accepted text from {} at {}", sender_id, timestamp_ms));
                     }
                     s.transport_status.insert(
                         format!("{} ({})", sender_id, peer_addr.ip()),
@@ -332,6 +390,7 @@ async fn handle_incoming_transport_connection(
 
             if let Ok(TransportMessage::SyncImage {
                 sender_id,
+                timestamp_ms,
                 message_hash,
                 mime_type,
                 image_base64,
@@ -340,6 +399,10 @@ async fn handle_incoming_transport_connection(
                 if let Ok(mut s) = state.lock() {
                     if s.recent_hashes.contains(&message_hash) {
                         s.sync_dropped_count += 1;
+                        push_diagnostic(&mut s, format!("dropped duplicate image hash={} from {}", message_hash, sender_id));
+                    } else if !should_accept_incoming(&mut s, &sender_id, timestamp_ms) {
+                        s.sync_rejected_stale_count += 1;
+                        push_diagnostic(&mut s, format!("rejected stale image from {} at {}", sender_id, timestamp_ms));
                     } else {
                         remember_hash(&mut s, message_hash);
                         s.pending_remote_image = Some(IncomingImage {
@@ -347,6 +410,7 @@ async fn handle_incoming_transport_connection(
                             image_base64,
                         });
                         s.sync_received_count += 1;
+                        push_diagnostic(&mut s, format!("accepted image from {} at {}", sender_id, timestamp_ms));
                     }
                     s.transport_status.insert(
                         format!("{} ({})", sender_id, peer_addr.ip()),
@@ -512,6 +576,7 @@ async fn send_transport_payload_to_peer(
     };
 
     if ws_stream.send(Message::Text(sync_text.into())).await.is_ok() {
+        let peer_for_diag = peer_name.clone();
         set_transport_status(
             &state,
             peer_name,
@@ -519,6 +584,7 @@ async fn send_transport_payload_to_peer(
         );
         if let Ok(mut s) = state.lock() {
             s.sync_sent_count += 1;
+            push_diagnostic(&mut s, format!("sent {payload_label} to {}", peer_for_diag));
         }
     } else {
         set_transport_status(&state, peer_name, "authenticated but send failed".to_string());
@@ -650,9 +716,16 @@ fn get_status(state: State<'_, SharedState>) -> Result<serde_json::Value, String
         "sync_stats": {
             "sent": state.sync_sent_count,
             "received": state.sync_received_count,
-            "dropped": state.sync_dropped_count
+            "dropped": state.sync_dropped_count,
+            "stale_rejected": state.sync_rejected_stale_count
         }
     }))
+}
+
+#[tauri::command]
+fn get_diagnostics(state: State<'_, SharedState>) -> Result<Vec<String>, String> {
+    let s = state.lock().map_err(|e| e.to_string())?;
+    Ok(s.diagnostic_events.iter().cloned().collect())
 }
 
 #[tauri::command]
@@ -673,9 +746,10 @@ async fn push_local_text_clipboard(content: String, state: State<'_, SharedState
         return Ok(());
     }
 
-    let (sender_id, pairing_code, peers, message_hash, allow_sync) = {
+    let (sender_id, pairing_code, peers, message_hash, timestamp_ms, allow_sync) = {
         let mut s = state.lock().map_err(|e| e.to_string())?;
         let hash = compute_text_hash(&s.device_name, &content);
+        let timestamp_ms = now_ms();
 
         if s.recent_hashes.contains(&hash) {
             s.sync_dropped_count += 1;
@@ -695,6 +769,7 @@ async fn push_local_text_clipboard(content: String, state: State<'_, SharedState
             s.settings.pairing_code.clone(),
             discovered,
             hash,
+            timestamp_ms,
             s.sync_enabled && s.paired,
         )
     };
@@ -721,6 +796,7 @@ async fn push_local_text_clipboard(content: String, state: State<'_, SharedState
             pairing_code.clone(),
             TransportMessage::SyncText {
                 sender_id: sender_id.clone(),
+                timestamp_ms,
                 message_hash,
                 text: content.clone(),
             },
@@ -742,9 +818,10 @@ async fn push_local_image_payload(
         return Ok(());
     }
 
-    let (sender_id, pairing_code, peers, message_hash, allow_sync) = {
+    let (sender_id, pairing_code, peers, message_hash, timestamp_ms, allow_sync) = {
         let mut s = state.lock().map_err(|e| e.to_string())?;
         let hash = compute_image_hash(&s.device_name, &mime_type, &image_base64);
+        let timestamp_ms = now_ms();
 
         if s.recent_hashes.contains(&hash) {
             s.sync_dropped_count += 1;
@@ -764,6 +841,7 @@ async fn push_local_image_payload(
             s.settings.pairing_code.clone(),
             discovered,
             hash,
+            timestamp_ms,
             s.sync_enabled && s.paired,
         )
     };
@@ -790,6 +868,7 @@ async fn push_local_image_payload(
             pairing_code.clone(),
             TransportMessage::SyncImage {
                 sender_id: sender_id.clone(),
+                timestamp_ms,
                 message_hash,
                 mime_type: mime_type.clone(),
                 image_base64: image_base64.clone(),
@@ -823,6 +902,7 @@ fn get_settings(state: State<'_, SharedState>) -> Result<AppSettings, String> {
 fn save_settings(
     max_image_size_kb: u32,
     pairing_code: String,
+    device_name_override: String,
     state: State<'_, SharedState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
@@ -834,7 +914,10 @@ fn save_settings(
     s.settings = AppSettings {
         max_image_size_kb,
         pairing_code,
+        device_name_override,
     };
+    let host_name = whoami::fallible::hostname().unwrap_or_else(|_| "unknown-host".to_string());
+    s.device_name = effective_device_name(&s.settings, &host_name);
     s.transport_status.clear();
     s.paired = false;
     s.sync_enabled = false;
@@ -861,6 +944,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_status,
+            get_diagnostics,
             consume_remote_text,
             consume_remote_image,
             push_local_text_clipboard,
@@ -874,7 +958,7 @@ pub fn run() {
             let settings = load_settings(app.handle());
             let host_name =
                 whoami::fallible::hostname().unwrap_or_else(|_| "unknown-host".to_string());
-            let device_name = format!("clipsync-{host_name}");
+            let device_name = effective_device_name(&settings, &host_name);
 
             let state: State<'_, SharedState> = app.state();
             let mut s = state.lock().map_err(|e| e.to_string())?;

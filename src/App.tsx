@@ -12,12 +12,14 @@ type StatusResponse = {
     sent: number;
     received: number;
     dropped: number;
+    stale_rejected: number;
   };
 };
 
 type SettingsResponse = {
   max_image_size_kb: number;
   pairing_code: string;
+  device_name_override: string;
 };
 
 type IncomingImage = {
@@ -33,11 +35,13 @@ function App() {
   const [paired, setPaired] = useState(false);
   const [maxImageSizeKb, setMaxImageSizeKb] = useState(2048);
   const [pairingCode, setPairingCode] = useState('');
+  const [deviceNameOverride, setDeviceNameOverride] = useState('');
   const [unlockCode, setUnlockCode] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
   const [peerTransport, setPeerTransport] = useState<Record<string, string>>({});
-  const [syncStats, setSyncStats] = useState({ sent: 0, received: 0, dropped: 0 });
+  const [syncStats, setSyncStats] = useState({ sent: 0, received: 0, dropped: 0, stale_rejected: 0 });
+  const [diagnostics, setDiagnostics] = useState<string[]>([]);
   const [manualSyncText, setManualSyncText] = useState('');
   const [remoteTextPreview, setRemoteTextPreview] = useState('');
   const [manualImagePreview, setManualImagePreview] = useState('');
@@ -55,7 +59,16 @@ function App() {
         setSyncEnabled(res.sync_enabled);
         setPaired(res.paired);
         setPeerTransport(res.peer_transport ?? {});
-        setSyncStats(res.sync_stats ?? { sent: 0, received: 0, dropped: 0 });
+        setSyncStats(res.sync_stats ?? { sent: 0, received: 0, dropped: 0, stale_rejected: 0 });
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    const fetchDiagnostics = async () => {
+      try {
+        const events = await invoke<string[]>('get_diagnostics');
+        setDiagnostics(events.slice(-8));
       } catch (e) {
         console.error(e);
       }
@@ -66,6 +79,7 @@ function App() {
         const settings = await invoke<SettingsResponse>('get_settings');
         setMaxImageSizeKb(settings.max_image_size_kb);
         setPairingCode(settings.pairing_code);
+        setDeviceNameOverride(settings.device_name_override ?? '');
       } catch (e) {
         console.error(e);
       }
@@ -73,8 +87,12 @@ function App() {
 
     fetchStatus();
     fetchSettings();
+    fetchDiagnostics();
 
-    const timer = window.setInterval(fetchStatus, 3000);
+    const timer = window.setInterval(() => {
+      fetchStatus();
+      fetchDiagnostics();
+    }, 3000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -141,8 +159,9 @@ function App() {
       await invoke('save_settings', {
         maxImageSizeKb,
         pairingCode,
+        deviceNameOverride,
       });
-      setSaveMessage('Settings saved.');
+      setSaveMessage('Settings saved. Device name update may require app restart for discovery name refresh.');
       setPaired(false);
       setSyncEnabled(false);
     } catch (error) {
@@ -306,7 +325,19 @@ function App() {
                   <div>Sent: {syncStats.sent}</div>
                   <div>Received: {syncStats.received}</div>
                   <div>Dropped: {syncStats.dropped}</div>
+                  <div>Stale Rejected: {syncStats.stale_rejected}</div>
                 </div>
+              </div>
+
+              <div className="sync-stats-box">
+                <div className="text-gray-400">Recent Diagnostics</div>
+                {diagnostics.length > 0 ? (
+                  diagnostics.map((event, idx) => (
+                    <div key={idx} className="diagnostic-row">{event}</div>
+                  ))
+                ) : (
+                  <div className="diagnostic-row">No diagnostics yet</div>
+                )}
               </div>
 
               <div className="manual-sync-box">
@@ -376,6 +407,19 @@ function App() {
                 onChange={(e) => setPairingCode(e.target.value.replace(/\D/g, ''))}
                 className="settings-input"
                 placeholder="0000"
+              />
+
+              <label className="settings-label" htmlFor="deviceNameOverride">
+                Device name (optional)
+              </label>
+              <input
+                id="deviceNameOverride"
+                type="text"
+                maxLength={40}
+                value={deviceNameOverride}
+                onChange={(e) => setDeviceNameOverride(e.target.value)}
+                className="settings-input"
+                placeholder="Leave empty to use default name"
               />
 
               <button onClick={onSaveSettings} className="settings-save-btn">
