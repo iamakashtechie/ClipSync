@@ -7,6 +7,7 @@ type StatusResponse = {
   devices: string[];
   sync_enabled: boolean;
   paired: boolean;
+  peer_transport?: Record<string, string>;
 };
 
 type SettingsResponse = {
@@ -25,6 +26,7 @@ function App() {
   const [unlockCode, setUnlockCode] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
+  const [peerTransport, setPeerTransport] = useState<Record<string, string>>({});
 
   // Fetch initial status
   useEffect(() => {
@@ -35,6 +37,7 @@ function App() {
         setDevices(res.devices);
         setSyncEnabled(res.sync_enabled);
         setPaired(res.paired);
+        setPeerTransport(res.peer_transport ?? {});
       } catch (e) {
         console.error(e);
       }
@@ -173,7 +176,12 @@ function App() {
                 devices.map((device, i) => (
                   <div key={i} className="bg-gray-800 p-4 rounded-2xl mb-2 flex items-center gap-3">
                     <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
-                    {device}
+                    <div>
+                      <div>{device}</div>
+                      <div className="text-xs text-gray-400 mt-4">
+                        Transport: {peerTransport[device] ?? 'discovered (handshake pending)'}
+                      </div>
+                    </div>
                   </div>
                 ))
               ) : (

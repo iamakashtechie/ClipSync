@@ -8,9 +8,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use futures_util::{SinkExt, StreamExt};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
+use tokio::net::TcpListener;
+use tokio_tungstenite::{accept_async, connect_async, tungstenite::Message};
 
 const CLIPSYNC_SERVICE_TYPE: &str = "_clipsync._tcp.local.";
 const CLIPSYNC_WS_PORT: u16 = 9876;
@@ -35,7 +38,9 @@ struct AppState {
     sync_enabled: bool,
     paired: bool,
     discovered: HashMap<String, String>,
+    transport_status: HashMap<String, String>,
     settings: AppSettings,
+    device_name: String,
 }
 
 impl Default for AppState {
@@ -44,7 +49,9 @@ impl Default for AppState {
             sync_enabled: true,
             paired: false,
             discovered: HashMap::new(),
+            transport_status: HashMap::new(),
             settings: AppSettings::default(),
+            device_name: "".to_string(),
         }
     }
 }
@@ -85,6 +92,12 @@ struct UdpDiscoveryBeacon {
 fn upsert_discovered_device(state: &SharedState, device_name: String, addr: String) {
     if let Ok(mut s) = state.lock() {
         s.discovered.insert(device_name, addr);
+    }
+}
+
+fn set_transport_status(state: &SharedState, peer: String, status: String) {
+    if let Ok(mut s) = state.lock() {
+        s.transport_status.insert(peer, status);
     }
 }
 
@@ -142,6 +155,210 @@ fn start_mdns_discovery(state: SharedState, device_name: String) {
                     upsert_discovered_device(&state, resolved_name, addr);
                 }
             }
+        }
+    });
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum TransportMessage {
+    Hello {
+        device_name: String,
+        pairing_code: String,
+    },
+    HelloAck {
+        device_name: String,
+        accepted: bool,
+        reason: String,
+    },
+}
+
+async fn handle_incoming_transport_connection(
+    stream: tokio::net::TcpStream,
+    state: SharedState,
+) {
+    let Ok(peer_addr) = stream.peer_addr() else {
+        return;
+    };
+
+    let Ok(mut ws_stream) = accept_async(stream).await else {
+        return;
+    };
+
+    let next_msg = tokio::time::timeout(Duration::from_secs(4), ws_stream.next()).await;
+    let incoming = match next_msg {
+        Ok(Some(Ok(msg))) => msg,
+        _ => {
+            let _ = ws_stream.close(None).await;
+            return;
+        }
+    };
+
+    let Message::Text(payload) = incoming else {
+        let _ = ws_stream.close(None).await;
+        return;
+    };
+
+    let hello = serde_json::from_str::<TransportMessage>(&payload);
+    let (remote_name, remote_code, local_name, local_code) = match hello {
+        Ok(TransportMessage::Hello {
+            device_name,
+            pairing_code,
+        }) => {
+            let Ok(s) = state.lock() else {
+                return;
+            };
+            (
+                device_name,
+                pairing_code,
+                s.device_name.clone(),
+                s.settings.pairing_code.clone(),
+            )
+        }
+        _ => {
+            let _ = ws_stream.close(None).await;
+            return;
+        }
+    };
+
+    let accepted = !local_code.is_empty() && local_code == remote_code;
+    let reason = if accepted {
+        "authenticated".to_string()
+    } else {
+        "pairing_code_mismatch".to_string()
+    };
+
+    let ack = TransportMessage::HelloAck {
+        device_name: local_name,
+        accepted,
+        reason: reason.clone(),
+    };
+    if let Ok(ack_text) = serde_json::to_string(&ack) {
+        let _ = ws_stream.send(Message::Text(ack_text.into())).await;
+    }
+
+    let peer_label = format!("{} ({})", remote_name, peer_addr.ip());
+    if accepted {
+        set_transport_status(&state, peer_label, "authenticated (inbound)".to_string());
+    } else {
+        set_transport_status(&state, peer_label, "rejected: pairing mismatch".to_string());
+    }
+
+    let _ = ws_stream.close(None).await;
+}
+
+fn start_transport_server(state: SharedState) {
+    tauri::async_runtime::spawn(async move {
+        let Ok(listener) = TcpListener::bind(("0.0.0.0", CLIPSYNC_WS_PORT)).await else {
+            eprintln!("Transport server bind failed on port {}", CLIPSYNC_WS_PORT);
+            return;
+        };
+
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                continue;
+            };
+
+            let state_clone = state.clone();
+            tauri::async_runtime::spawn(async move {
+                handle_incoming_transport_connection(stream, state_clone).await;
+            });
+        }
+    });
+}
+
+async fn attempt_outbound_handshake(peer_name: String, addr: String, state: SharedState) {
+    let (local_name, local_code) = {
+        let Ok(s) = state.lock() else {
+            return;
+        };
+        (s.device_name.clone(), s.settings.pairing_code.clone())
+    };
+
+    if local_name.is_empty() || local_code.is_empty() {
+        set_transport_status(
+            &state,
+            peer_name,
+            "blocked: configure 4-digit pairing code".to_string(),
+        );
+        return;
+    }
+
+    let ws_url = format!("ws://{addr}");
+    let connect_result = tokio::time::timeout(Duration::from_secs(3), connect_async(ws_url)).await;
+    let Ok(Ok((mut ws_stream, _))) = connect_result else {
+        set_transport_status(&state, peer_name, "connect failed".to_string());
+        return;
+    };
+
+    let hello = TransportMessage::Hello {
+        device_name: local_name,
+        pairing_code: local_code,
+    };
+    let Ok(hello_text) = serde_json::to_string(&hello) else {
+        set_transport_status(&state, peer_name, "local serialization failed".to_string());
+        let _ = ws_stream.close(None).await;
+        return;
+    };
+
+    if ws_stream.send(Message::Text(hello_text.into())).await.is_err() {
+        set_transport_status(&state, peer_name, "send hello failed".to_string());
+        let _ = ws_stream.close(None).await;
+        return;
+    }
+
+    let ack_msg = tokio::time::timeout(Duration::from_secs(4), ws_stream.next()).await;
+    let Ok(Some(Ok(Message::Text(payload)))) = ack_msg else {
+        set_transport_status(&state, peer_name, "ack timeout".to_string());
+        let _ = ws_stream.close(None).await;
+        return;
+    };
+
+    match serde_json::from_str::<TransportMessage>(&payload) {
+        Ok(TransportMessage::HelloAck {
+            device_name,
+            accepted,
+            reason,
+        }) => {
+            if accepted {
+                set_transport_status(
+                    &state,
+                    peer_name,
+                    format!("authenticated with {device_name}"),
+                );
+            } else {
+                set_transport_status(&state, peer_name, format!("rejected: {reason}"));
+            }
+        }
+        _ => {
+            set_transport_status(&state, peer_name, "invalid ack".to_string());
+        }
+    }
+
+    let _ = ws_stream.close(None).await;
+}
+
+fn start_transport_handshake_loop(state: SharedState) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let peers = {
+                let Ok(s) = state.lock() else {
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    continue;
+                };
+
+                s.discovered
+                    .iter()
+                    .filter(|(name, _)| !name.contains(&s.device_name))
+                    .map(|(name, addr)| (name.clone(), addr.clone()))
+                    .collect::<Vec<(String, String)>>()
+            };
+
+            for (peer_name, addr) in peers {
+                attempt_outbound_handshake(peer_name, addr, state.clone()).await;
+            }
+
+            tokio::time::sleep(Duration::from_secs(4)).await;
         }
     });
 }
@@ -225,11 +442,13 @@ fn start_udp_fallback_discovery(state: SharedState, device_name: String) {
 fn get_status(state: State<'_, SharedState>) -> Result<serde_json::Value, String> {
     let state = state.lock().map_err(|e| e.to_string())?;
     let devices: Vec<String> = state.discovered.keys().cloned().collect();
+    let peer_transport = state.transport_status.clone();
     Ok(serde_json::json!({
         "status": if !devices.is_empty() { "connected" } else { "searching" },
         "sync_enabled": state.sync_enabled,
         "paired": state.paired,
-        "devices": devices
+        "devices": devices,
+        "peer_transport": peer_transport
     }))
 }
 
@@ -266,6 +485,7 @@ fn save_settings(
         max_image_size_kb,
         pairing_code,
     };
+    s.transport_status.clear();
     s.paired = false;
     s.sync_enabled = false;
     save_settings_to_disk(&app, &s.settings)
@@ -298,16 +518,23 @@ pub fn run() {
         ])
         .setup(|app| {
             let settings = load_settings(app.handle());
+            let host_name =
+                whoami::fallible::hostname().unwrap_or_else(|_| "unknown-host".to_string());
+            let device_name = format!("clipsync-{host_name}");
+
             let state: State<'_, SharedState> = app.state();
             let mut s = state.lock().map_err(|e| e.to_string())?;
             s.settings = settings;
+            s.device_name = device_name.clone();
             drop(s);
 
-            let host_name = whoami::fallible::hostname().unwrap_or_else(|_| "unknown-host".to_string());
-            let device_name = format!("clipsync-{host_name}");
             let state_clone: SharedState = app.state::<SharedState>().inner().clone();
             start_mdns_discovery(state_clone.clone(), device_name.clone());
             start_udp_fallback_discovery(state_clone, device_name);
+
+            let transport_state: SharedState = app.state::<SharedState>().inner().clone();
+            start_transport_server(transport_state.clone());
+            start_transport_handshake_loop(transport_state);
 
             println!("ClipSync v0.1 started");
             Ok(())
