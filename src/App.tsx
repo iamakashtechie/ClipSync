@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import './App.css';
 
@@ -8,6 +8,11 @@ type StatusResponse = {
   sync_enabled: boolean;
   paired: boolean;
   peer_transport?: Record<string, string>;
+  sync_stats?: {
+    sent: number;
+    received: number;
+    dropped: number;
+  };
 };
 
 type SettingsResponse = {
@@ -27,6 +32,10 @@ function App() {
   const [saveMessage, setSaveMessage] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
   const [peerTransport, setPeerTransport] = useState<Record<string, string>>({});
+  const [syncStats, setSyncStats] = useState({ sent: 0, received: 0, dropped: 0 });
+  const [manualSyncText, setManualSyncText] = useState('');
+  const [remoteTextPreview, setRemoteTextPreview] = useState('');
+  const lastClipboardTextRef = useRef('');
 
   // Fetch initial status
   useEffect(() => {
@@ -38,6 +47,7 @@ function App() {
         setSyncEnabled(res.sync_enabled);
         setPaired(res.paired);
         setPeerTransport(res.peer_transport ?? {});
+        setSyncStats(res.sync_stats ?? { sent: 0, received: 0, dropped: 0 });
       } catch (e) {
         console.error(e);
       }
@@ -59,6 +69,38 @@ function App() {
     const timer = window.setInterval(fetchStatus, 3000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(async () => {
+      if (!paired || !syncEnabled) return;
+
+      try {
+        const remote = await invoke<string | null>('consume_remote_text');
+        if (remote) {
+          setRemoteTextPreview(remote);
+          try {
+            await navigator.clipboard.writeText(remote);
+          } catch {
+            // Clipboard API can fail on some Android WebView contexts.
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+
+      try {
+        const localText = await navigator.clipboard.readText();
+        if (localText && localText !== lastClipboardTextRef.current) {
+          lastClipboardTextRef.current = localText;
+          await invoke('push_local_text_clipboard', { content: localText });
+        }
+      } catch {
+        // Ignore clipboard read issues and keep manual sync path available.
+      }
+    }, 1200);
+
+    return () => window.clearInterval(interval);
+  }, [paired, syncEnabled]);
 
   const toggleSync = async () => {
     const newState = !syncEnabled;
@@ -111,6 +153,20 @@ function App() {
     } catch (error) {
       console.error('Failed to validate pairing:', error);
       setSyncMessage('Unable to verify pairing code right now.');
+    }
+  };
+
+  const onManualSync = async () => {
+    if (!manualSyncText.trim()) {
+      setSyncMessage('Enter text to send.');
+      return;
+    }
+    try {
+      await invoke('push_local_text_clipboard', { content: manualSyncText });
+      setSyncMessage('Text sent to authenticated peers.');
+    } catch (error) {
+      console.error('Manual sync failed:', error);
+      setSyncMessage('Manual sync failed.');
     }
   };
 
@@ -189,6 +245,28 @@ function App() {
                   No devices found yet.<br />Waiting for your phone...
                 </div>
               )}
+
+              <div className="sync-stats-box">
+                <div className="text-gray-400">Sync Stats</div>
+                <div className="sync-stats-grid">
+                  <div>Sent: {syncStats.sent}</div>
+                  <div>Received: {syncStats.received}</div>
+                  <div>Dropped: {syncStats.dropped}</div>
+                </div>
+              </div>
+
+              <div className="manual-sync-box">
+                <label className="settings-label" htmlFor="manualSyncText">Manual text sync test</label>
+                <textarea
+                  id="manualSyncText"
+                  value={manualSyncText}
+                  onChange={(e) => setManualSyncText(e.target.value)}
+                  className="settings-input manual-sync-input"
+                  placeholder="Type text and send to peer"
+                />
+                <button onClick={onManualSync} className="settings-save-btn">Send Text</button>
+                <p className="settings-hint">Last remote text: {remoteTextPreview || 'No remote text yet'}</p>
+              </div>
             </div>
           </div>
         )}

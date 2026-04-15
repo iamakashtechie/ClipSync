@@ -16,6 +16,12 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 	- WebSocket transport server/client handshake loop
 	- Mandatory pairing-code verification in transport handshake
 	- Per-peer transport status shown in dashboard
+- Phase 4 (current sync-core milestone):
+	- Authenticated text payload transfer over transport
+	- Remote text inbox consumption path
+	- Loop-prevention hash cache and drop counting
+	- Sync counters (sent/received/dropped) in dashboard
+	- Manual text sync test UI + best-effort clipboard polling
 
 ## What works right now
 
@@ -25,11 +31,12 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 	- `authenticated with ...`
 	- `rejected: pairing mismatch`
 	- connection/ack errors when applicable
+- Text payload sync is active for authenticated peers.
+- Sync counters are visible in dashboard.
 
 ## What is not implemented yet
 
-- Clipboard payload sync (text/image transfer) is not wired yet.
-- Loop-prevention hash cache is not wired yet.
+- Image payload sync is not wired yet.
 - Android background clipboard Accessibility bridge is not wired yet.
 
 ## Run
@@ -70,9 +77,13 @@ npm run tauri android dev
 5. Confirm transport status becomes `authenticated with ...` on both devices.
 6. Change one device to a different code and save.
 7. Confirm transport status changes to `rejected: pairing mismatch`.
+8. Enter text in `Manual text sync test` on device A and press `Send Text`.
+9. Confirm device B shows the new text in `Last remote text` and `Received` counter increments.
+10. Confirm device A `Sent` counter increments.
 
 ## Notes
 
 - Discovery currently updates backend state; UI polls every 3 seconds to reflect newly discovered peers.
 - Transport handshake is now active and should show status like `authenticated` or `rejected: pairing mismatch` per peer.
-- Clipboard payload sync and Android background clipboard bridge are the next implementation steps.
+- Text sync uses authenticated transport and loop-prevention hashing.
+- Image sync and Android background clipboard bridge are the next implementation steps.

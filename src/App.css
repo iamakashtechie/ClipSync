@@ -289,6 +289,34 @@ body,
   color: #a8b3c2;
 }
 
+.sync-stats-box {
+  margin-top: 1rem;
+  padding: 0.9rem;
+  border-radius: 0.9rem;
+  background-color: #1a2230;
+}
+
+.sync-stats-grid {
+  margin-top: 0.6rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  color: #d8e1ef;
+  font-size: 0.9rem;
+}
+
+.manual-sync-box {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.manual-sync-input {
+  min-height: 90px;
+  resize: vertical;
+}
+
 .unlock-row {
   display: flex;
   gap: 0.75rem;

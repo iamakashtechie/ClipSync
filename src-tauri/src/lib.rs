@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -41,6 +43,11 @@ struct AppState {
     transport_status: HashMap<String, String>,
     settings: AppSettings,
     device_name: String,
+    recent_hashes: VecDeque<u64>,
+    sync_sent_count: u64,
+    sync_received_count: u64,
+    sync_dropped_count: u64,
+    pending_remote_text: Option<String>,
 }
 
 impl Default for AppState {
@@ -52,6 +59,11 @@ impl Default for AppState {
             transport_status: HashMap::new(),
             settings: AppSettings::default(),
             device_name: "".to_string(),
+            recent_hashes: VecDeque::new(),
+            sync_sent_count: 0,
+            sync_received_count: 0,
+            sync_dropped_count: 0,
+            pending_remote_text: None,
         }
     }
 }
@@ -98,6 +110,24 @@ fn upsert_discovered_device(state: &SharedState, device_name: String, addr: Stri
 fn set_transport_status(state: &SharedState, peer: String, status: String) {
     if let Ok(mut s) = state.lock() {
         s.transport_status.insert(peer, status);
+    }
+}
+
+fn compute_text_hash(sender: &str, text: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    sender.hash(&mut hasher);
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn remember_hash(state: &mut AppState, hash: u64) {
+    const MAX_RECENT_HASHES: usize = 64;
+    if state.recent_hashes.contains(&hash) {
+        return;
+    }
+    state.recent_hashes.push_back(hash);
+    if state.recent_hashes.len() > MAX_RECENT_HASHES {
+        state.recent_hashes.pop_front();
     }
 }
 
@@ -171,6 +201,11 @@ enum TransportMessage {
         accepted: bool,
         reason: String,
     },
+    SyncText {
+        sender_id: String,
+        message_hash: u64,
+        text: String,
+    },
 }
 
 async fn handle_incoming_transport_connection(
@@ -240,6 +275,30 @@ async fn handle_incoming_transport_connection(
     let peer_label = format!("{} ({})", remote_name, peer_addr.ip());
     if accepted {
         set_transport_status(&state, peer_label, "authenticated (inbound)".to_string());
+
+        let maybe_sync = tokio::time::timeout(Duration::from_secs(2), ws_stream.next()).await;
+        if let Ok(Some(Ok(Message::Text(payload)))) = maybe_sync {
+            if let Ok(TransportMessage::SyncText {
+                sender_id,
+                message_hash,
+                text,
+            }) = serde_json::from_str::<TransportMessage>(&payload)
+            {
+                if let Ok(mut s) = state.lock() {
+                    if s.recent_hashes.contains(&message_hash) {
+                        s.sync_dropped_count += 1;
+                    } else {
+                        remember_hash(&mut s, message_hash);
+                        s.pending_remote_text = Some(text);
+                        s.sync_received_count += 1;
+                    }
+                    s.transport_status.insert(
+                        format!("{} ({})", sender_id, peer_addr.ip()),
+                        "authenticated (inbound) + synced text".to_string(),
+                    );
+                }
+            }
+        }
     } else {
         set_transport_status(&state, peer_label, "rejected: pairing mismatch".to_string());
     }
@@ -333,6 +392,76 @@ async fn attempt_outbound_handshake(peer_name: String, addr: String, state: Shar
         _ => {
             set_transport_status(&state, peer_name, "invalid ack".to_string());
         }
+    }
+
+    let _ = ws_stream.close(None).await;
+}
+
+async fn send_text_to_peer(
+    peer_name: String,
+    addr: String,
+    sender_id: String,
+    pairing_code: String,
+    text: String,
+    message_hash: u64,
+    state: SharedState,
+) {
+    let ws_url = format!("ws://{addr}");
+    let connect_result = tokio::time::timeout(Duration::from_secs(3), connect_async(ws_url)).await;
+    let Ok(Ok((mut ws_stream, _))) = connect_result else {
+        set_transport_status(&state, peer_name, "connect failed".to_string());
+        return;
+    };
+
+    let hello = TransportMessage::Hello {
+        device_name: sender_id.clone(),
+        pairing_code,
+    };
+    let Ok(hello_text) = serde_json::to_string(&hello) else {
+        let _ = ws_stream.close(None).await;
+        return;
+    };
+    if ws_stream.send(Message::Text(hello_text.into())).await.is_err() {
+        set_transport_status(&state, peer_name, "send hello failed".to_string());
+        let _ = ws_stream.close(None).await;
+        return;
+    }
+
+    let ack_msg = tokio::time::timeout(Duration::from_secs(4), ws_stream.next()).await;
+    let Ok(Some(Ok(Message::Text(payload)))) = ack_msg else {
+        set_transport_status(&state, peer_name, "ack timeout".to_string());
+        let _ = ws_stream.close(None).await;
+        return;
+    };
+
+    let accepted = matches!(
+        serde_json::from_str::<TransportMessage>(&payload),
+        Ok(TransportMessage::HelloAck { accepted: true, .. })
+    );
+
+    if !accepted {
+        set_transport_status(&state, peer_name, "rejected: pairing mismatch".to_string());
+        let _ = ws_stream.close(None).await;
+        return;
+    }
+
+    let sync = TransportMessage::SyncText {
+        sender_id,
+        message_hash,
+        text,
+    };
+    let Ok(sync_text) = serde_json::to_string(&sync) else {
+        let _ = ws_stream.close(None).await;
+        return;
+    };
+
+    if ws_stream.send(Message::Text(sync_text.into())).await.is_ok() {
+        set_transport_status(&state, peer_name, "authenticated + sent text".to_string());
+        if let Ok(mut s) = state.lock() {
+            s.sync_sent_count += 1;
+        }
+    } else {
+        set_transport_status(&state, peer_name, "authenticated but send failed".to_string());
     }
 
     let _ = ws_stream.close(None).await;
@@ -448,8 +577,71 @@ fn get_status(state: State<'_, SharedState>) -> Result<serde_json::Value, String
         "sync_enabled": state.sync_enabled,
         "paired": state.paired,
         "devices": devices,
-        "peer_transport": peer_transport
+        "peer_transport": peer_transport,
+        "sync_stats": {
+            "sent": state.sync_sent_count,
+            "received": state.sync_received_count,
+            "dropped": state.sync_dropped_count
+        }
     }))
+}
+
+#[tauri::command]
+fn consume_remote_text(state: State<'_, SharedState>) -> Result<Option<String>, String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    Ok(s.pending_remote_text.take())
+}
+
+#[tauri::command]
+async fn push_local_text_clipboard(content: String, state: State<'_, SharedState>) -> Result<(), String> {
+    if content.trim().is_empty() {
+        return Ok(());
+    }
+
+    let (sender_id, pairing_code, peers, message_hash, allow_sync) = {
+        let mut s = state.lock().map_err(|e| e.to_string())?;
+        let hash = compute_text_hash(&s.device_name, &content);
+
+        if s.recent_hashes.contains(&hash) {
+            s.sync_dropped_count += 1;
+            return Ok(());
+        }
+
+        remember_hash(&mut s, hash);
+        let discovered = s
+            .discovered
+            .iter()
+            .filter(|(name, _)| !name.contains(&s.device_name))
+            .map(|(name, addr)| (name.clone(), addr.clone()))
+            .collect::<Vec<(String, String)>>();
+
+        (
+            s.device_name.clone(),
+            s.settings.pairing_code.clone(),
+            discovered,
+            hash,
+            s.sync_enabled && s.paired,
+        )
+    };
+
+    if !allow_sync {
+        return Ok(());
+    }
+
+    for (peer_name, addr) in peers {
+        send_text_to_peer(
+            peer_name,
+            addr,
+            sender_id.clone(),
+            pairing_code.clone(),
+            content.clone(),
+            message_hash,
+            state.inner().clone(),
+        )
+        .await;
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -511,6 +703,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_status,
+            consume_remote_text,
+            push_local_text_clipboard,
             toggle_sync,
             get_settings,
             save_settings,
