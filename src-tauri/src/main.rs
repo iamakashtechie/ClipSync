@@ -1,0 +1,3 @@
+fn main() {
+    clipsync::run();
+}

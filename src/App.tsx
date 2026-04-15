@@ -1,0 +1,234 @@
+import { useState, useEffect } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import './App.css';
+
+type StatusResponse = {
+  status: 'searching' | 'connected';
+  devices: string[];
+  sync_enabled: boolean;
+  paired: boolean;
+};
+
+type SettingsResponse = {
+  max_image_size_kb: number;
+  pairing_code: string;
+};
+
+function App() {
+  const [currentTab, setCurrentTab] = useState<'dashboard' | 'settings'>('dashboard');
+  const [syncEnabled, setSyncEnabled] = useState(true);
+  const [status, setStatus] = useState<'searching' | 'connected'>('searching');
+  const [devices, setDevices] = useState<string[]>([]);
+  const [paired, setPaired] = useState(false);
+  const [maxImageSizeKb, setMaxImageSizeKb] = useState(2048);
+  const [pairingCode, setPairingCode] = useState('');
+  const [unlockCode, setUnlockCode] = useState('');
+  const [saveMessage, setSaveMessage] = useState('');
+  const [syncMessage, setSyncMessage] = useState('');
+
+  // Fetch initial status
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const res = await invoke<StatusResponse>('get_status');
+        setStatus(res.status);
+        setDevices(res.devices);
+        setSyncEnabled(res.sync_enabled);
+        setPaired(res.paired);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    const fetchSettings = async () => {
+      try {
+        const settings = await invoke<SettingsResponse>('get_settings');
+        setMaxImageSizeKb(settings.max_image_size_kb);
+        setPairingCode(settings.pairing_code);
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    fetchStatus();
+    fetchSettings();
+
+    const timer = window.setInterval(fetchStatus, 3000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const toggleSync = async () => {
+    const newState = !syncEnabled;
+    try {
+      await invoke('toggle_sync', { enabled: newState });
+      setSyncEnabled(newState);
+      setSyncMessage('');
+    } catch (error) {
+      console.error('Failed to toggle sync:', error);
+      setSyncMessage(String(error));
+    }
+  };
+
+  const onSaveSettings = async () => {
+    if (!/^\d{4}$/.test(pairingCode)) {
+      setSaveMessage('Pairing code must be exactly 4 digits.');
+      return;
+    }
+
+    try {
+      await invoke('save_settings', {
+        maxImageSizeKb,
+        pairingCode,
+      });
+      setSaveMessage('Settings saved.');
+      setPaired(false);
+      setSyncEnabled(false);
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+      setSaveMessage('Failed to save settings.');
+    }
+  };
+
+  const onUnlockSync = async () => {
+    if (!/^\d{4}$/.test(unlockCode)) {
+      setSyncMessage('Enter your 4-digit pairing code to unlock sync.');
+      return;
+    }
+
+    try {
+      const ok = await invoke<boolean>('validate_pairing', { code: unlockCode });
+      if (ok) {
+        setPaired(true);
+        setSyncMessage('Pairing verified. You can enable sync now.');
+      } else {
+        setPaired(false);
+        setSyncEnabled(false);
+        setSyncMessage('Invalid pairing code.');
+      }
+    } catch (error) {
+      console.error('Failed to validate pairing:', error);
+      setSyncMessage('Unable to verify pairing code right now.');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
+      <div className="bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-3xl">📋</span>
+          <h1 className="text-2xl font-bold">ClipSync</h1>
+        </div>
+        
+        <div className="flex gap-1 bg-gray-800 rounded-xl p-1">
+          <button onClick={() => setCurrentTab('dashboard')} className={`px-6 py-2 rounded-xl font-medium ${currentTab === 'dashboard' ? 'bg-gray-900 text-white' : 'text-gray-400'}`}>Dashboard</button>
+          <button onClick={() => setCurrentTab('settings')} className={`px-6 py-2 rounded-xl font-medium ${currentTab === 'settings' ? 'bg-gray-900 text-white' : 'text-gray-400'}`}>Settings</button>
+        </div>
+      </div>
+
+      <div className="flex-1 p-8">
+        {currentTab === 'dashboard' && (
+          <div className="max-w-2xl mx-auto space-y-6">
+            <div className="bg-gray-900 rounded-3xl p-10 text-center">
+              <div className={`text-7xl mb-6 ${status === 'connected' ? 'text-green-400' : 'text-yellow-400'}`}>
+                {status === 'connected' ? '✅' : '🔎'}
+              </div>
+              <h2 className="text-5xl font-semibold mb-3">
+                {status === 'connected' ? 'Connected & Syncing' : 'Searching for devices...'}
+              </h2>
+              <p className="text-gray-400 text-xl mb-8">
+                {status === 'connected' 
+                  ? 'Your devices are connected over local network.' 
+                  : 'Open ClipSync on your Android phone on the same Wi-Fi or hotspot.'}
+              </p>
+
+              <p className="text-gray-400 mb-6">
+                Security status: {paired ? 'Paired' : 'Locked (pairing required)'}
+              </p>
+
+              <div className="unlock-row">
+                <input
+                  type="text"
+                  maxLength={4}
+                  value={unlockCode}
+                  onChange={(e) => setUnlockCode(e.target.value.replace(/\D/g, ''))}
+                  className="settings-input"
+                  placeholder="Enter 4-digit code"
+                />
+                <button onClick={onUnlockSync} className="unlock-btn">Unlock Sync</button>
+              </div>
+
+              <button
+                onClick={toggleSync}
+                className={`px-12 py-4 rounded-2xl text-xl font-medium ${syncEnabled ? 'bg-green-600 hover:bg-green-500' : 'bg-gray-700 hover:bg-gray-600'}`}
+                disabled={!paired && !syncEnabled}
+              >
+                {syncEnabled ? '✅ Sync Enabled' : '❌ Sync Disabled'}
+              </button>
+              {syncMessage ? <p className="settings-hint mt-4">{syncMessage}</p> : null}
+            </div>
+
+            <div className="bg-gray-900 rounded-3xl p-8">
+              <h3 className="text-xl font-medium mb-4">Discovered Devices</h3>
+              {devices.length > 0 ? (
+                devices.map((device, i) => (
+                  <div key={i} className="bg-gray-800 p-4 rounded-2xl mb-2 flex items-center gap-3">
+                    <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+                    {device}
+                  </div>
+                ))
+              ) : (
+                <div className="bg-gray-800 rounded-2xl p-8 text-center text-gray-400">
+                  No devices found yet.<br />Waiting for your phone...
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {currentTab === 'settings' && (
+          <div className="max-w-2xl mx-auto bg-gray-900 rounded-3xl p-10">
+            <h2 className="text-3xl font-semibold mb-6">Settings</h2>
+            <div className="space-y-4">
+              <label className="settings-label" htmlFor="maxImageSizeKb">
+                Max image size to sync (KB)
+              </label>
+              <input
+                id="maxImageSizeKb"
+                type="number"
+                min={64}
+                step={64}
+                value={maxImageSizeKb}
+                onChange={(e) => setMaxImageSizeKb(Number(e.target.value))}
+                className="settings-input"
+              />
+
+              <label className="settings-label" htmlFor="pairingCode">
+                Mandatory pairing code (4 digits)
+              </label>
+              <input
+                id="pairingCode"
+                type="text"
+                maxLength={4}
+                value={pairingCode}
+                onChange={(e) => setPairingCode(e.target.value.replace(/\D/g, ''))}
+                className="settings-input"
+                placeholder="0000"
+              />
+
+              <button onClick={onSaveSettings} className="settings-save-btn">
+                Save Settings
+              </button>
+              {saveMessage ? <p className="settings-hint">{saveMessage}</p> : null}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="text-center text-xs text-gray-500 py-6 border-t border-gray-800">
+        Local network only • Privacy-first
+      </div>
+    </div>
+  );
+}
+
+export default App;
