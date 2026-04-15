@@ -34,6 +34,11 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
   - Optional background reliability mode toggle in Settings
   - App foreground/background visibility reporting to backend runtime
   - Runtime health panel in dashboard (foreground state + report age)
+- Phase 7 Android native scaffold started:
+  - Android foreground service class scaffolded and started from MainActivity
+  - Boot receiver scaffold added for auto-start on boot
+  - Accessibility service scaffold + XML metadata added
+  - Android manifest updated with required service/boot permissions and component declarations
 
 ## What works right now
 
@@ -48,10 +53,12 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Sync counters are visible in dashboard.
 - Conflict and stale message decisions are visible via diagnostics.
 - Runtime health state is visible for lifecycle debugging.
+- Android native service scaffolding is present in generated Android module.
 
 ## What is not implemented yet
 
-- Android background clipboard Accessibility bridge and true native foreground service are not wired yet.
+- Accessibility clipboard bridge logic is not wired yet (service is scaffold only).
+- Full foreground-service lifecycle integration with Rust runtime is not wired yet.
 
 ## Run
 
@@ -99,6 +106,9 @@ npm run tauri android dev
 13. Trigger rapid repeated sends from both sides and confirm `Stale Rejected` and diagnostics rows update.
 14. Switch app in/out of focus and confirm `Runtime Health` foreground/background and report age updates.
 15. Toggle `Background reliability mode (preview)` in Settings, save, and confirm runtime reflects it.
+16. Launch Android app and confirm persistent foreground notification appears for ClipSync.
+17. Reboot device (optional) and verify service scaffold auto-start behavior.
+18. Open Android Accessibility settings and confirm ClipSync service entry exists.
 
 ## Notes
 
@@ -106,4 +116,4 @@ npm run tauri android dev
 - Transport handshake is now active and should show status like `authenticated` or `rejected: pairing mismatch` per peer.
 - Text and image sync use authenticated transport and loop-prevention hashing.
 - Conflict resolution now prefers newer timestamp; tie uses sender id ordering for deterministic behavior.
-- True Android background service + Accessibility bridge remains the next implementation step.
+- Native Android background components are scaffolded; the next step is wiring accessibility clipboard events into sync runtime.
