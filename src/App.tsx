@@ -20,6 +20,11 @@ type SettingsResponse = {
   pairing_code: string;
 };
 
+type IncomingImage = {
+  mime_type: string;
+  image_base64: string;
+};
+
 function App() {
   const [currentTab, setCurrentTab] = useState<'dashboard' | 'settings'>('dashboard');
   const [syncEnabled, setSyncEnabled] = useState(true);
@@ -35,6 +40,9 @@ function App() {
   const [syncStats, setSyncStats] = useState({ sent: 0, received: 0, dropped: 0 });
   const [manualSyncText, setManualSyncText] = useState('');
   const [remoteTextPreview, setRemoteTextPreview] = useState('');
+  const [manualImagePreview, setManualImagePreview] = useState('');
+  const [manualImageMime, setManualImageMime] = useState('image/png');
+  const [remoteImagePreview, setRemoteImagePreview] = useState('');
   const lastClipboardTextRef = useRef('');
 
   // Fetch initial status
@@ -83,6 +91,15 @@ function App() {
           } catch {
             // Clipboard API can fail on some Android WebView contexts.
           }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+
+      try {
+        const remoteImage = await invoke<IncomingImage | null>('consume_remote_image');
+        if (remoteImage && remoteImage.image_base64) {
+          setRemoteImagePreview(`data:${remoteImage.mime_type};base64,${remoteImage.image_base64}`);
         }
       } catch (e) {
         console.error(e);
@@ -167,6 +184,43 @@ function App() {
     } catch (error) {
       console.error('Manual sync failed:', error);
       setSyncMessage('Manual sync failed.');
+    }
+  };
+
+  const onPickManualImage: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setManualImageMime(file.type || 'image/png');
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      setManualImagePreview(result);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const onManualImageSync = async () => {
+    if (!manualImagePreview.startsWith('data:')) {
+      setSyncMessage('Pick an image first.');
+      return;
+    }
+
+    const base64 = manualImagePreview.split(',')[1] ?? '';
+    if (!base64) {
+      setSyncMessage('Invalid image payload.');
+      return;
+    }
+
+    try {
+      await invoke('push_local_image_payload', {
+        imageBase64: base64,
+        mimeType: manualImageMime,
+      });
+      setSyncMessage('Image sent to authenticated peers.');
+    } catch (error) {
+      console.error('Manual image sync failed:', error);
+      setSyncMessage('Manual image sync failed.');
     }
   };
 
@@ -266,6 +320,29 @@ function App() {
                 />
                 <button onClick={onManualSync} className="settings-save-btn">Send Text</button>
                 <p className="settings-hint">Last remote text: {remoteTextPreview || 'No remote text yet'}</p>
+              </div>
+
+              <div className="manual-sync-box">
+                <label className="settings-label" htmlFor="manualImage">Manual image sync test</label>
+                <input
+                  id="manualImage"
+                  type="file"
+                  accept="image/*"
+                  onChange={onPickManualImage}
+                  className="settings-input"
+                />
+                {manualImagePreview ? (
+                  <img src={manualImagePreview} alt="Manual to send" className="sync-image-preview" />
+                ) : null}
+                <button onClick={onManualImageSync} className="settings-save-btn">Send Image</button>
+                {remoteImagePreview ? (
+                  <>
+                    <p className="settings-hint">Last remote image:</p>
+                    <img src={remoteImagePreview} alt="Remote" className="sync-image-preview" />
+                  </>
+                ) : (
+                  <p className="settings-hint">No remote image yet</p>
+                )}
               </div>
             </div>
           </div>

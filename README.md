@@ -5,38 +5,41 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 ## Current implementation status
 
 - Phase 1 complete:
-	- Dashboard and settings UI
-	- Persistent settings (`max_image_size_kb`, mandatory `pairing_code`)
-	- Pairing gate enforcement before sync can be enabled
+  - Dashboard and settings UI
+  - Persistent settings (`max_image_size_kb`, mandatory `pairing_code`)
+  - Pairing gate enforcement before sync can be enabled
 - Phase 2 complete (discovery):
-	- mDNS service registration + browsing
-	- UDP broadcast discovery fallback for hotspot scenarios
-	- Request/reply beacon behavior to improve symmetric peer visibility
+  - mDNS service registration + browsing
+  - UDP broadcast discovery fallback for hotspot scenarios
+  - Request/reply beacon behavior to improve symmetric peer visibility
 - Phase 3 foundation complete (transport auth):
-	- WebSocket transport server/client handshake loop
-	- Mandatory pairing-code verification in transport handshake
-	- Per-peer transport status shown in dashboard
+  - WebSocket transport server/client handshake loop
+  - Mandatory pairing-code verification in transport handshake
+  - Per-peer transport status shown in dashboard
 - Phase 4 (current sync-core milestone):
-	- Authenticated text payload transfer over transport
-	- Remote text inbox consumption path
-	- Loop-prevention hash cache and drop counting
-	- Sync counters (sent/received/dropped) in dashboard
-	- Manual text sync test UI + best-effort clipboard polling
+  - Authenticated text payload transfer over transport
+  - Authenticated image payload transfer over transport
+  - Remote text inbox consumption path
+  - Remote image inbox consumption path
+  - Loop-prevention hash cache and drop counting
+  - Sync counters (sent/received/dropped) in dashboard
+  - Manual text + image sync test UI + best-effort clipboard polling
+  - Local-network transport scoping (non-local peers are ignored)
 
 ## What works right now
 
 - Both devices can discover each other over local network (Wi-Fi/hotspot).
 - Both devices can attempt authenticated transport handshake.
 - UI shows transport result per discovered peer:
-	- `authenticated with ...`
-	- `rejected: pairing mismatch`
-	- connection/ack errors when applicable
+  - `authenticated with ...`
+  - `rejected: pairing mismatch`
+  - connection/ack errors when applicable
 - Text payload sync is active for authenticated peers.
+- Image payload sync is active for authenticated peers (manual image path).
 - Sync counters are visible in dashboard.
 
 ## What is not implemented yet
 
-- Image payload sync is not wired yet.
 - Android background clipboard Accessibility bridge is not wired yet.
 
 ## Run
@@ -80,10 +83,12 @@ npm run tauri android dev
 8. Enter text in `Manual text sync test` on device A and press `Send Text`.
 9. Confirm device B shows the new text in `Last remote text` and `Received` counter increments.
 10. Confirm device A `Sent` counter increments.
+11. Pick an image in `Manual image sync test` on device A and press `Send Image`.
+12. Confirm device B shows `Last remote image` preview and `Received` increments again.
 
 ## Notes
 
 - Discovery currently updates backend state; UI polls every 3 seconds to reflect newly discovered peers.
 - Transport handshake is now active and should show status like `authenticated` or `rejected: pairing mismatch` per peer.
-- Text sync uses authenticated transport and loop-prevention hashing.
-- Image sync and Android background clipboard bridge are the next implementation steps.
+- Text and image sync use authenticated transport and loop-prevention hashing.
+- Android background clipboard bridge is the next implementation step.

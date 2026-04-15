@@ -317,6 +317,16 @@ body,
   resize: vertical;
 }
 
+.sync-image-preview {
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border: 1px solid #3b4656;
+  border-radius: 0.75rem;
+  background-color: #0f1319;
+  padding: 0.5rem;
+}
+
 .unlock-row {
   display: flex;
   gap: 0.75rem;

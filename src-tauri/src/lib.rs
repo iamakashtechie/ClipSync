@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::net::IpAddr;
 use std::net::UdpSocket;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -48,6 +49,7 @@ struct AppState {
     sync_received_count: u64,
     sync_dropped_count: u64,
     pending_remote_text: Option<String>,
+    pending_remote_image: Option<IncomingImage>,
 }
 
 impl Default for AppState {
@@ -64,8 +66,15 @@ impl Default for AppState {
             sync_received_count: 0,
             sync_dropped_count: 0,
             pending_remote_text: None,
+            pending_remote_image: None,
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct IncomingImage {
+    mime_type: String,
+    image_base64: String,
 }
 
 type SharedState = Arc<Mutex<AppState>>;
@@ -118,6 +127,22 @@ fn compute_text_hash(sender: &str, text: &str) -> u64 {
     sender.hash(&mut hasher);
     text.hash(&mut hasher);
     hasher.finish()
+}
+
+fn compute_image_hash(sender: &str, mime_type: &str, image_base64: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    sender.hash(&mut hasher);
+    mime_type.hash(&mut hasher);
+    image_base64.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn is_private_or_loopback(ip: &str) -> bool {
+    match ip.parse::<IpAddr>() {
+        Ok(IpAddr::V4(v4)) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
+        Ok(IpAddr::V6(v6)) => v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local(),
+        Err(_) => false,
+    }
 }
 
 fn remember_hash(state: &mut AppState, hash: u64) {
@@ -205,6 +230,12 @@ enum TransportMessage {
         sender_id: String,
         message_hash: u64,
         text: String,
+    },
+    SyncImage {
+        sender_id: String,
+        message_hash: u64,
+        mime_type: String,
+        image_base64: String,
     },
 }
 
@@ -295,6 +326,31 @@ async fn handle_incoming_transport_connection(
                     s.transport_status.insert(
                         format!("{} ({})", sender_id, peer_addr.ip()),
                         "authenticated (inbound) + synced text".to_string(),
+                    );
+                }
+            }
+
+            if let Ok(TransportMessage::SyncImage {
+                sender_id,
+                message_hash,
+                mime_type,
+                image_base64,
+            }) = serde_json::from_str::<TransportMessage>(&payload)
+            {
+                if let Ok(mut s) = state.lock() {
+                    if s.recent_hashes.contains(&message_hash) {
+                        s.sync_dropped_count += 1;
+                    } else {
+                        remember_hash(&mut s, message_hash);
+                        s.pending_remote_image = Some(IncomingImage {
+                            mime_type,
+                            image_base64,
+                        });
+                        s.sync_received_count += 1;
+                    }
+                    s.transport_status.insert(
+                        format!("{} ({})", sender_id, peer_addr.ip()),
+                        "authenticated (inbound) + synced image".to_string(),
                     );
                 }
             }
@@ -397,13 +453,12 @@ async fn attempt_outbound_handshake(peer_name: String, addr: String, state: Shar
     let _ = ws_stream.close(None).await;
 }
 
-async fn send_text_to_peer(
+async fn send_transport_payload_to_peer(
     peer_name: String,
     addr: String,
     sender_id: String,
     pairing_code: String,
-    text: String,
-    message_hash: u64,
+    transport_payload: TransportMessage,
     state: SharedState,
 ) {
     let ws_url = format!("ws://{addr}");
@@ -428,14 +483,14 @@ async fn send_text_to_peer(
     }
 
     let ack_msg = tokio::time::timeout(Duration::from_secs(4), ws_stream.next()).await;
-    let Ok(Some(Ok(Message::Text(payload)))) = ack_msg else {
+    let Ok(Some(Ok(Message::Text(ack_payload)))) = ack_msg else {
         set_transport_status(&state, peer_name, "ack timeout".to_string());
         let _ = ws_stream.close(None).await;
         return;
     };
 
     let accepted = matches!(
-        serde_json::from_str::<TransportMessage>(&payload),
+        serde_json::from_str::<TransportMessage>(&ack_payload),
         Ok(TransportMessage::HelloAck { accepted: true, .. })
     );
 
@@ -445,18 +500,23 @@ async fn send_text_to_peer(
         return;
     }
 
-    let sync = TransportMessage::SyncText {
-        sender_id,
-        message_hash,
-        text,
+    let payload_label = match &transport_payload {
+        TransportMessage::SyncImage { .. } => "image",
+        TransportMessage::SyncText { .. } => "text",
+        _ => "payload",
     };
-    let Ok(sync_text) = serde_json::to_string(&sync) else {
+
+    let Ok(sync_text) = serde_json::to_string(&transport_payload) else {
         let _ = ws_stream.close(None).await;
         return;
     };
 
     if ws_stream.send(Message::Text(sync_text.into())).await.is_ok() {
-        set_transport_status(&state, peer_name, "authenticated + sent text".to_string());
+        set_transport_status(
+            &state,
+            peer_name,
+            format!("authenticated + sent {payload_label}"),
+        );
         if let Ok(mut s) = state.lock() {
             s.sync_sent_count += 1;
         }
@@ -484,6 +544,15 @@ fn start_transport_handshake_loop(state: SharedState) {
             };
 
             for (peer_name, addr) in peers {
+                let host = addr.split(':').next().unwrap_or_default();
+                if !is_private_or_loopback(host) {
+                    set_transport_status(
+                        &state,
+                        peer_name,
+                        "skipped: non-local address".to_string(),
+                    );
+                    continue;
+                }
                 attempt_outbound_handshake(peer_name, addr, state.clone()).await;
             }
 
@@ -593,6 +662,12 @@ fn consume_remote_text(state: State<'_, SharedState>) -> Result<Option<String>, 
 }
 
 #[tauri::command]
+fn consume_remote_image(state: State<'_, SharedState>) -> Result<Option<IncomingImage>, String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    Ok(s.pending_remote_image.take())
+}
+
+#[tauri::command]
 async fn push_local_text_clipboard(content: String, state: State<'_, SharedState>) -> Result<(), String> {
     if content.trim().is_empty() {
         return Ok(());
@@ -629,13 +704,96 @@ async fn push_local_text_clipboard(content: String, state: State<'_, SharedState
     }
 
     for (peer_name, addr) in peers {
-        send_text_to_peer(
+        let host = addr.split(':').next().unwrap_or_default();
+        if !is_private_or_loopback(host) {
+            set_transport_status(
+                state.inner(),
+                peer_name,
+                "skipped: non-local address".to_string(),
+            );
+            continue;
+        }
+
+        send_transport_payload_to_peer(
             peer_name,
             addr,
             sender_id.clone(),
             pairing_code.clone(),
-            content.clone(),
-            message_hash,
+            TransportMessage::SyncText {
+                sender_id: sender_id.clone(),
+                message_hash,
+                text: content.clone(),
+            },
+            state.inner().clone(),
+        )
+        .await;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn push_local_image_payload(
+    image_base64: String,
+    mime_type: String,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
+    if image_base64.trim().is_empty() || mime_type.trim().is_empty() {
+        return Ok(());
+    }
+
+    let (sender_id, pairing_code, peers, message_hash, allow_sync) = {
+        let mut s = state.lock().map_err(|e| e.to_string())?;
+        let hash = compute_image_hash(&s.device_name, &mime_type, &image_base64);
+
+        if s.recent_hashes.contains(&hash) {
+            s.sync_dropped_count += 1;
+            return Ok(());
+        }
+
+        remember_hash(&mut s, hash);
+        let discovered = s
+            .discovered
+            .iter()
+            .filter(|(name, _)| !name.contains(&s.device_name))
+            .map(|(name, addr)| (name.clone(), addr.clone()))
+            .collect::<Vec<(String, String)>>();
+
+        (
+            s.device_name.clone(),
+            s.settings.pairing_code.clone(),
+            discovered,
+            hash,
+            s.sync_enabled && s.paired,
+        )
+    };
+
+    if !allow_sync {
+        return Ok(());
+    }
+
+    for (peer_name, addr) in peers {
+        let host = addr.split(':').next().unwrap_or_default();
+        if !is_private_or_loopback(host) {
+            set_transport_status(
+                state.inner(),
+                peer_name,
+                "skipped: non-local address".to_string(),
+            );
+            continue;
+        }
+
+        send_transport_payload_to_peer(
+            peer_name,
+            addr,
+            sender_id.clone(),
+            pairing_code.clone(),
+            TransportMessage::SyncImage {
+                sender_id: sender_id.clone(),
+                message_hash,
+                mime_type: mime_type.clone(),
+                image_base64: image_base64.clone(),
+            },
             state.inner().clone(),
         )
         .await;
@@ -704,7 +862,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_status,
             consume_remote_text,
+            consume_remote_image,
             push_local_text_clipboard,
+            push_local_image_payload,
             toggle_sync,
             get_settings,
             save_settings,
