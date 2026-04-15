@@ -28,6 +28,7 @@ struct AppSettings {
     max_image_size_kb: u32,
     pairing_code: String,
     device_name_override: String,
+    background_mode_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -36,6 +37,7 @@ impl Default for AppSettings {
             max_image_size_kb: 2048,
             pairing_code: "".to_string(),
             device_name_override: "".to_string(),
+            background_mode_enabled: true,
         }
     }
 }
@@ -57,6 +59,8 @@ struct AppState {
     last_applied_timestamp_ms: u64,
     last_applied_sender: String,
     diagnostic_events: VecDeque<String>,
+    is_app_foreground: bool,
+    last_visibility_report_ms: u64,
 }
 
 impl Default for AppState {
@@ -78,6 +82,8 @@ impl Default for AppState {
             last_applied_timestamp_ms: 0,
             last_applied_sender: "".to_string(),
             diagnostic_events: VecDeque::new(),
+            is_app_foreground: true,
+            last_visibility_report_ms: 0,
         }
     }
 }
@@ -707,12 +713,18 @@ fn get_status(state: State<'_, SharedState>) -> Result<serde_json::Value, String
     let state = state.lock().map_err(|e| e.to_string())?;
     let devices: Vec<String> = state.discovered.keys().cloned().collect();
     let peer_transport = state.transport_status.clone();
+    let visibility_age_ms = now_ms().saturating_sub(state.last_visibility_report_ms);
     Ok(serde_json::json!({
         "status": if !devices.is_empty() { "connected" } else { "searching" },
         "sync_enabled": state.sync_enabled,
         "paired": state.paired,
         "devices": devices,
         "peer_transport": peer_transport,
+        "runtime": {
+            "is_app_foreground": state.is_app_foreground,
+            "visibility_report_age_ms": visibility_age_ms,
+            "background_mode_enabled": state.settings.background_mode_enabled
+        },
         "sync_stats": {
             "sent": state.sync_sent_count,
             "received": state.sync_received_count,
@@ -720,6 +732,21 @@ fn get_status(state: State<'_, SharedState>) -> Result<serde_json::Value, String
             "stale_rejected": state.sync_rejected_stale_count
         }
     }))
+}
+
+#[tauri::command]
+fn report_app_visibility(is_foreground: bool, state: State<'_, SharedState>) -> Result<(), String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    s.is_app_foreground = is_foreground;
+    s.last_visibility_report_ms = now_ms();
+    push_diagnostic(
+        &mut s,
+        format!(
+            "app visibility: {}",
+            if is_foreground { "foreground" } else { "background" }
+        ),
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -903,6 +930,7 @@ fn save_settings(
     max_image_size_kb: u32,
     pairing_code: String,
     device_name_override: String,
+    background_mode_enabled: bool,
     state: State<'_, SharedState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
@@ -915,6 +943,7 @@ fn save_settings(
         max_image_size_kb,
         pairing_code,
         device_name_override,
+        background_mode_enabled,
     };
     let host_name = whoami::fallible::hostname().unwrap_or_else(|_| "unknown-host".to_string());
     s.device_name = effective_device_name(&s.settings, &host_name);
@@ -944,6 +973,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             get_status,
+            report_app_visibility,
             get_diagnostics,
             consume_remote_text,
             consume_remote_image,
@@ -964,6 +994,7 @@ pub fn run() {
             let mut s = state.lock().map_err(|e| e.to_string())?;
             s.settings = settings;
             s.device_name = device_name.clone();
+            s.last_visibility_report_ms = now_ms();
             drop(s);
 
             let state_clone: SharedState = app.state::<SharedState>().inner().clone();

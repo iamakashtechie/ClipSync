@@ -30,6 +30,10 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
   - Stale message rejection tracking (`stale_rejected`)
   - Runtime diagnostics event buffer exposed to UI
   - Dashboard diagnostics panel for quick field debugging
+- Phase 6 groundwork started (background reliability):
+  - Optional background reliability mode toggle in Settings
+  - App foreground/background visibility reporting to backend runtime
+  - Runtime health panel in dashboard (foreground state + report age)
 
 ## What works right now
 
@@ -43,10 +47,11 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Image payload sync is active for authenticated peers (manual image path).
 - Sync counters are visible in dashboard.
 - Conflict and stale message decisions are visible via diagnostics.
+- Runtime health state is visible for lifecycle debugging.
 
 ## What is not implemented yet
 
-- Android background clipboard Accessibility bridge is not wired yet.
+- Android background clipboard Accessibility bridge and true native foreground service are not wired yet.
 
 ## Run
 
@@ -92,6 +97,8 @@ npm run tauri android dev
 11. Pick an image in `Manual image sync test` on device A and press `Send Image`.
 12. Confirm device B shows `Last remote image` preview and `Received` increments again.
 13. Trigger rapid repeated sends from both sides and confirm `Stale Rejected` and diagnostics rows update.
+14. Switch app in/out of focus and confirm `Runtime Health` foreground/background and report age updates.
+15. Toggle `Background reliability mode (preview)` in Settings, save, and confirm runtime reflects it.
 
 ## Notes
 
@@ -99,4 +106,4 @@ npm run tauri android dev
 - Transport handshake is now active and should show status like `authenticated` or `rejected: pairing mismatch` per peer.
 - Text and image sync use authenticated transport and loop-prevention hashing.
 - Conflict resolution now prefers newer timestamp; tie uses sender id ordering for deterministic behavior.
-- Android background clipboard bridge is the next implementation step.
+- True Android background service + Accessibility bridge remains the next implementation step.

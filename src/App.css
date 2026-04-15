@@ -261,6 +261,14 @@ body,
   font-weight: 500;
 }
 
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: #d8e1ef;
+  font-size: 0.95rem;
+}
+
 .settings-input {
   width: 100%;
   border: 1px solid #3b4656;

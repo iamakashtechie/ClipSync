@@ -7,6 +7,11 @@ type StatusResponse = {
   devices: string[];
   sync_enabled: boolean;
   paired: boolean;
+  runtime?: {
+    is_app_foreground: boolean;
+    visibility_report_age_ms: number;
+    background_mode_enabled: boolean;
+  };
   peer_transport?: Record<string, string>;
   sync_stats?: {
     sent: number;
@@ -20,6 +25,7 @@ type SettingsResponse = {
   max_image_size_kb: number;
   pairing_code: string;
   device_name_override: string;
+  background_mode_enabled: boolean;
 };
 
 type IncomingImage = {
@@ -36,6 +42,7 @@ function App() {
   const [maxImageSizeKb, setMaxImageSizeKb] = useState(2048);
   const [pairingCode, setPairingCode] = useState('');
   const [deviceNameOverride, setDeviceNameOverride] = useState('');
+  const [backgroundModeEnabled, setBackgroundModeEnabled] = useState(true);
   const [unlockCode, setUnlockCode] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
@@ -48,6 +55,11 @@ function App() {
   const [manualImageMime, setManualImageMime] = useState('image/png');
   const [remoteImagePreview, setRemoteImagePreview] = useState('');
   const lastClipboardTextRef = useRef('');
+  const [runtimeHealth, setRuntimeHealth] = useState({
+    is_app_foreground: true,
+    visibility_report_age_ms: 0,
+    background_mode_enabled: true,
+  });
 
   // Fetch initial status
   useEffect(() => {
@@ -58,6 +70,11 @@ function App() {
         setDevices(res.devices);
         setSyncEnabled(res.sync_enabled);
         setPaired(res.paired);
+        setRuntimeHealth(res.runtime ?? {
+          is_app_foreground: true,
+          visibility_report_age_ms: 0,
+          background_mode_enabled: true,
+        });
         setPeerTransport(res.peer_transport ?? {});
         setSyncStats(res.sync_stats ?? { sent: 0, received: 0, dropped: 0, stale_rejected: 0 });
       } catch (e) {
@@ -80,6 +97,7 @@ function App() {
         setMaxImageSizeKb(settings.max_image_size_kb);
         setPairingCode(settings.pairing_code);
         setDeviceNameOverride(settings.device_name_override ?? '');
+        setBackgroundModeEnabled(settings.background_mode_enabled ?? true);
       } catch (e) {
         console.error(e);
       }
@@ -94,6 +112,34 @@ function App() {
       fetchDiagnostics();
     }, 3000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const report = async (isForeground: boolean) => {
+      try {
+        await invoke('report_app_visibility', { isForeground });
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    const onVisibility = () => {
+      report(!document.hidden);
+    };
+
+    const onFocus = () => report(true);
+    const onBlur = () => report(false);
+
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('blur', onBlur);
+    report(!document.hidden);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('blur', onBlur);
+    };
   }, []);
 
   useEffect(() => {
@@ -160,6 +206,7 @@ function App() {
         maxImageSizeKb,
         pairingCode,
         deviceNameOverride,
+        backgroundModeEnabled,
       });
       setSaveMessage('Settings saved. Device name update may require app restart for discovery name refresh.');
       setPaired(false);
@@ -340,6 +387,15 @@ function App() {
                 )}
               </div>
 
+              <div className="sync-stats-box">
+                <div className="text-gray-400">Runtime Health</div>
+                <div className="sync-stats-grid">
+                  <div>App: {runtimeHealth.is_app_foreground ? 'Foreground' : 'Background'}</div>
+                  <div>Report age: {Math.round(runtimeHealth.visibility_report_age_ms / 1000)}s</div>
+                  <div>Bg mode: {runtimeHealth.background_mode_enabled ? 'Enabled' : 'Disabled'}</div>
+                </div>
+              </div>
+
               <div className="manual-sync-box">
                 <label className="settings-label" htmlFor="manualSyncText">Manual text sync test</label>
                 <textarea
@@ -421,6 +477,16 @@ function App() {
                 className="settings-input"
                 placeholder="Leave empty to use default name"
               />
+
+              <label className="settings-checkbox-row" htmlFor="backgroundModeEnabled">
+                <input
+                  id="backgroundModeEnabled"
+                  type="checkbox"
+                  checked={backgroundModeEnabled}
+                  onChange={(e) => setBackgroundModeEnabled(e.target.checked)}
+                />
+                <span>Background reliability mode (preview)</span>
+              </label>
 
               <button onClick={onSaveSettings} className="settings-save-btn">
                 Save Settings
