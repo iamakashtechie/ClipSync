@@ -82,11 +82,18 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Background mode now actively gates local send when app is in background.
 - Android manifest now includes nearby-network permission declarations with API-level compatibility handling.
 - Boot receiver now follows background-mode policy and emits boot runtime diagnostics to the app UI.
+- Android foreground notification now includes `Pause Sync` / `Resume Sync` action with runtime status propagation.
 
 ## What is not implemented yet
 
 - Accessibility bridge currently forwards best-effort text events only (image/background write path still pending).
 - Some Android apps do not place copy-image content on system clipboard as shareable URI; in those cases native image capture may not trigger.
+
+## Notification action behavior (Phase B1 in progress)
+
+- Foreground notification provides one action button that flips between `Pause Sync` and `Resume Sync`.
+- Action is idempotent: pressing pause while already paused (or resume while active) keeps state stable and logs an info event.
+- Action writes native sync state immediately and emits runtime event so dashboard/native status can reflect the toggle.
 
 ## Boot auto-start behavior (Phase A3 in progress)
 
@@ -244,6 +251,9 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 27. Enable `Background reliability mode`, reboot Android device, open app, and confirm Native Bridge Status includes boot success event.
 28. Disable `Background reliability mode`, reboot device, open app, and confirm Native Bridge Status reports boot skip due to policy.
 29. If locked-boot broadcast is available on device, confirm Native Bridge Status reports locked-boot defer event.
+30. With background mode ON, press `Pause Sync` in Android notification and confirm notification text switches to paused state.
+31. While paused, copy text/image and confirm no new native clipboard send events are emitted.
+32. Press `Resume Sync` in notification and confirm clipboard sends resume and dashboard sync state updates.
 
 ## Notes
 

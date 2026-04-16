@@ -109,6 +109,14 @@ const DEFAULT_VALIDATION_CASES: ValidationCase[] = [
     notes: '',
     last_run_at: '',
   },
+  {
+    id: 'notification_pause_resume_sync',
+    title: 'Notification pause/resume sync action',
+    description: 'Android foreground notification action toggles sync idempotently and dashboard state reflects the action.',
+    result: 'not-run',
+    notes: '',
+    last_run_at: '',
+  },
 ];
 
 function loadValidationCases(): ValidationCase[] {
@@ -473,24 +481,54 @@ export function useClipSyncController() {
         level?: 'INFO' | 'SUCCESS' | 'FAILED';
         source?: string;
         message?: string;
+        syncEnabled?: boolean;
       }>;
 
       const level = customEvent.detail?.level ?? 'INFO';
       const source = customEvent.detail?.source ?? 'native';
       const message = customEvent.detail?.message?.trim() ?? '';
+      const requestedSyncEnabled = customEvent.detail?.syncEnabled;
       if (!message) {
         return;
       }
 
       setNativeBridgeStatus(`[${level}] ${source}: ${message}`);
       uiLog(level, 'NATIVE_RUNTIME_EVENT', `${source}: ${message}`);
+
+      if (typeof requestedSyncEnabled === 'boolean') {
+        if (requestedSyncEnabled === syncEnabled) {
+          return;
+        }
+
+        if (requestedSyncEnabled && !paired) {
+          setSyncMessage('Resume from notification requested, but pairing verification is required first.');
+          uiLog('FAILED', 'SYNC_TOGGLE_NOTIFICATION', 'resume requested while unpaired');
+          return;
+        }
+
+        void (async () => {
+          try {
+            await toggleSync(requestedSyncEnabled);
+            setSyncEnabled(requestedSyncEnabled);
+            setSyncMessage(
+              requestedSyncEnabled
+                ? 'Sync resumed from Android notification action.'
+                : 'Sync paused from Android notification action.',
+            );
+            uiLog('SUCCESS', 'SYNC_TOGGLE_NOTIFICATION', requestedSyncEnabled ? 'enabled' : 'disabled');
+          } catch (error) {
+            setSyncMessage('Notification sync toggle could not be applied.');
+            uiLog('FAILED', 'SYNC_TOGGLE_NOTIFICATION', String(error));
+          }
+        })();
+      }
     };
 
     window.addEventListener('clipsync-native-runtime', onNativeRuntime as EventListener);
     return () => {
       window.removeEventListener('clipsync-native-runtime', onNativeRuntime as EventListener);
     };
-  }, []);
+  }, [paired, syncEnabled]);
 
   useEffect(() => {
     const report = async (isForeground: boolean) => {

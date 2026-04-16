@@ -49,7 +49,9 @@ class MainActivity : TauriActivity() {
       val level = intent.getStringExtra(CLIPSYNC_EXTRA_LEVEL) ?: "INFO"
       val message = intent.getStringExtra(CLIPSYNC_EXTRA_MESSAGE) ?: return
       val source = intent.getStringExtra(CLIPSYNC_EXTRA_SOURCE) ?: "native"
-      dispatchRuntimeEventToWebView(level, source, message)
+      val hasSyncEnabled = intent.hasExtra(CLIPSYNC_EXTRA_SYNC_ENABLED)
+      val syncEnabled = if (hasSyncEnabled) intent.getBooleanExtra(CLIPSYNC_EXTRA_SYNC_ENABLED, true) else null
+      dispatchRuntimeEventToWebView(level, source, message, syncEnabled)
     }
   }
 
@@ -185,7 +187,7 @@ class MainActivity : TauriActivity() {
       )
     }
     consumePendingNativeRuntimeEvent(this)?.let { runtimeEvent ->
-      dispatchRuntimeEventToWebView(runtimeEvent.level, runtimeEvent.source, runtimeEvent.message)
+      dispatchRuntimeEventToWebView(runtimeEvent.level, runtimeEvent.source, runtimeEvent.message, runtimeEvent.syncEnabled)
     }
   }
 
@@ -206,7 +208,7 @@ class MainActivity : TauriActivity() {
       )
     }
     consumePendingNativeRuntimeEvent(this)?.let { runtimeEvent ->
-      dispatchRuntimeEventToWebView(runtimeEvent.level, runtimeEvent.source, runtimeEvent.message)
+      dispatchRuntimeEventToWebView(runtimeEvent.level, runtimeEvent.source, runtimeEvent.message, runtimeEvent.syncEnabled)
     }
   }
 
@@ -236,13 +238,16 @@ class MainActivity : TauriActivity() {
     webView.evaluateJavascript(js, null)
   }
 
-  private fun dispatchRuntimeEventToWebView(level: String, source: String, message: String) {
+  private fun dispatchRuntimeEventToWebView(level: String, source: String, message: String, syncEnabled: Boolean?) {
     val webView = webViewRef ?: return
     val detail = JSONObject().apply {
       put("level", level)
       put("source", source)
       put("message", message)
       put("timestampMs", System.currentTimeMillis())
+      if (syncEnabled != null) {
+        put("syncEnabled", syncEnabled)
+      }
     }
     val js = "window.dispatchEvent(new CustomEvent('clipsync-native-runtime', { detail: $detail }));"
     webView.evaluateJavascript(js, null)

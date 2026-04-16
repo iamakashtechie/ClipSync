@@ -3,6 +3,7 @@ package com.iamakashtechie.clipsync
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ClipboardManager
 import android.content.Context
 import android.app.Service
@@ -16,6 +17,13 @@ import java.io.InputStream
 class ClipSyncForegroundService : Service(), ClipboardManager.OnPrimaryClipChangedListener {
   private var clipboardManager: ClipboardManager? = null
   private val maxImageBytes = 2_500_000
+  private val notificationId = 1001
+
+  companion object {
+    private const val ACTION_SYNC_PAUSE = "com.iamakashtechie.clipsync.ACTION_SYNC_PAUSE"
+    private const val ACTION_SYNC_RESUME = "com.iamakashtechie.clipsync.ACTION_SYNC_RESUME"
+    private const val KEY_NATIVE_SYNC_ENABLED = "native_sync_enabled"
+  }
 
   override fun onCreate() {
     super.onCreate()
@@ -26,6 +34,53 @@ class ClipSyncForegroundService : Service(), ClipboardManager.OnPrimaryClipChang
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    when (intent?.action) {
+      ACTION_SYNC_PAUSE -> {
+        if (setNativeSyncEnabled(false)) {
+          publishNativeRuntimeEvent(
+            this,
+            "SUCCESS",
+            "Notification action paused sync.",
+            "notification_action",
+            syncEnabled = false,
+          )
+        } else {
+          publishNativeRuntimeEvent(
+            this,
+            "INFO",
+            "Notification action pause ignored; sync already paused.",
+            "notification_action",
+            syncEnabled = false,
+          )
+        }
+        startForegroundInternal()
+        return START_STICKY
+      }
+
+      ACTION_SYNC_RESUME -> {
+        if (setNativeSyncEnabled(true)) {
+          publishNativeRuntimeEvent(
+            this,
+            "SUCCESS",
+            "Notification action resumed sync.",
+            "notification_action",
+            syncEnabled = true,
+          )
+        } else {
+          publishNativeRuntimeEvent(
+            this,
+            "INFO",
+            "Notification action resume ignored; sync already active.",
+            "notification_action",
+            syncEnabled = true,
+          )
+        }
+        startForegroundInternal()
+        publishCurrentClipboard("foreground_service_resume_action")
+        return START_STICKY
+      }
+    }
+
     startForegroundInternal()
     publishCurrentClipboard("foreground_service_resume")
     return START_STICKY
@@ -45,7 +100,27 @@ class ClipSyncForegroundService : Service(), ClipboardManager.OnPrimaryClipChang
     publishCurrentClipboard("foreground_service")
   }
 
+  private fun isNativeSyncEnabled(): Boolean {
+    val prefs = getSharedPreferences(CLIPSYNC_NATIVE_PREFS, Context.MODE_PRIVATE)
+    return prefs.getBoolean(KEY_NATIVE_SYNC_ENABLED, true)
+  }
+
+  private fun setNativeSyncEnabled(enabled: Boolean): Boolean {
+    val prefs = getSharedPreferences(CLIPSYNC_NATIVE_PREFS, Context.MODE_PRIVATE)
+    val current = prefs.getBoolean(KEY_NATIVE_SYNC_ENABLED, true)
+    if (current == enabled) {
+      return false
+    }
+
+    prefs.edit().putBoolean(KEY_NATIVE_SYNC_ENABLED, enabled).apply()
+    return true
+  }
+
   private fun publishCurrentClipboard(source: String) {
+    if (!isNativeSyncEnabled()) {
+      return
+    }
+
     val clip = clipboardManager?.primaryClip ?: return
     if (clip.itemCount <= 0) {
       return
@@ -124,24 +199,50 @@ class ClipSyncForegroundService : Service(), ClipboardManager.OnPrimaryClipChang
       manager?.createNotificationChannel(channel)
     }
 
+    val syncEnabled = isNativeSyncEnabled()
+    val actionIntent = Intent(
+      this,
+      ClipSyncForegroundService::class.java,
+    ).apply {
+      action = if (syncEnabled) ACTION_SYNC_PAUSE else ACTION_SYNC_RESUME
+    }
+    val actionPendingIntent = PendingIntent.getService(
+      this,
+      if (syncEnabled) 2001 else 2002,
+      actionIntent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    val actionTitle = if (syncEnabled) "Pause Sync" else "Resume Sync"
+    val notificationText = if (syncEnabled) {
+      "Background reliability mode active"
+    } else {
+      "Sync paused from notification"
+    }
+
     val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       Notification.Builder(this, channelId)
         .setContentTitle("ClipSync")
-        .setContentText("Background reliability mode active")
+        .setContentText(notificationText)
         .setSmallIcon(android.R.drawable.stat_notify_sync)
         .setCategory(Notification.CATEGORY_SERVICE)
         .setOngoing(true)
+        .addAction(0, actionTitle, actionPendingIntent)
         .build()
     } else {
       Notification.Builder(this)
         .setContentTitle("ClipSync")
-        .setContentText("Background reliability mode active")
+        .setContentText(notificationText)
         .setSmallIcon(android.R.drawable.stat_notify_sync)
         .setCategory(Notification.CATEGORY_SERVICE)
         .setOngoing(true)
+        .addAction(0, actionTitle, actionPendingIntent)
         .build()
     }
 
-    startForeground(1001, notification)
+    startForeground(notificationId, notification)
+
+    val manager = getSystemService(NotificationManager::class.java)
+    manager?.notify(notificationId, notification)
   }
 }

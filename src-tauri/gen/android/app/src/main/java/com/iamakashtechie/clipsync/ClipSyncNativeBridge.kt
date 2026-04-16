@@ -15,6 +15,7 @@ const val CLIPSYNC_EXTRA_IMAGE_BASE64 = "image_base64"
 const val CLIPSYNC_EXTRA_SOURCE = "source"
 const val CLIPSYNC_EXTRA_LEVEL = "level"
 const val CLIPSYNC_EXTRA_MESSAGE = "message"
+const val CLIPSYNC_EXTRA_SYNC_ENABLED = "sync_enabled"
 
 private const val NATIVE_TYPE_TEXT = "text"
 private const val NATIVE_TYPE_IMAGE = "image"
@@ -28,6 +29,7 @@ private const val KEY_LAST_DISPATCHED_SIGNATURE = "last_dispatched_signature"
 private const val KEY_PENDING_RUNTIME_LEVEL = "pending_runtime_level"
 private const val KEY_PENDING_RUNTIME_MESSAGE = "pending_runtime_message"
 private const val KEY_PENDING_RUNTIME_SOURCE = "pending_runtime_source"
+private const val KEY_PENDING_RUNTIME_SYNC_ENABLED = "pending_runtime_sync_enabled"
 private const val KEY_LAST_RUNTIME_SIGNATURE = "last_runtime_signature"
 
 private const val MAX_TEXT_LEN = 12000
@@ -45,6 +47,7 @@ data class NativeRuntimeEvent(
   val level: String,
   val message: String,
   val source: String,
+  val syncEnabled: Boolean?,
 )
 
 fun publishNativeClipboardText(context: Context, text: String, source: String) {
@@ -159,7 +162,13 @@ fun consumePendingNativeClipboard(context: Context): NativeClipboardPayload? {
   )
 }
 
-fun publishNativeRuntimeEvent(context: Context, level: String, message: String, source: String) {
+fun publishNativeRuntimeEvent(
+  context: Context,
+  level: String,
+  message: String,
+  source: String,
+  syncEnabled: Boolean? = null,
+) {
   val normalizedLevel = level.trim().uppercase().ifEmpty { "INFO" }
   val normalizedMessage = message.trim()
   if (normalizedMessage.isEmpty()) {
@@ -167,7 +176,7 @@ fun publishNativeRuntimeEvent(context: Context, level: String, message: String, 
   }
 
   val normalizedSource = source.trim().ifEmpty { "native" }
-  val signature = "runtime:$normalizedLevel:$normalizedSource:$normalizedMessage"
+  val signature = "runtime:$normalizedLevel:$normalizedSource:$normalizedMessage:${syncEnabled?.toString() ?: "none"}"
   val prefs = context.getSharedPreferences(CLIPSYNC_NATIVE_PREFS, Context.MODE_PRIVATE)
   val last = prefs.getString(KEY_LAST_RUNTIME_SIGNATURE, "")
   if (last == signature) {
@@ -179,6 +188,7 @@ fun publishNativeRuntimeEvent(context: Context, level: String, message: String, 
     .putString(KEY_PENDING_RUNTIME_LEVEL, normalizedLevel)
     .putString(KEY_PENDING_RUNTIME_MESSAGE, normalizedMessage)
     .putString(KEY_PENDING_RUNTIME_SOURCE, normalizedSource)
+    .putString(KEY_PENDING_RUNTIME_SYNC_ENABLED, syncEnabled?.toString())
     .apply()
 
   val intent = Intent(CLIPSYNC_ACTION_NATIVE_RUNTIME_EVENT).apply {
@@ -186,6 +196,9 @@ fun publishNativeRuntimeEvent(context: Context, level: String, message: String, 
     putExtra(CLIPSYNC_EXTRA_LEVEL, normalizedLevel)
     putExtra(CLIPSYNC_EXTRA_MESSAGE, normalizedMessage)
     putExtra(CLIPSYNC_EXTRA_SOURCE, normalizedSource)
+    if (syncEnabled != null) {
+      putExtra(CLIPSYNC_EXTRA_SYNC_ENABLED, syncEnabled)
+    }
   }
   context.sendBroadcast(intent)
 }
@@ -195,12 +208,19 @@ fun consumePendingNativeRuntimeEvent(context: Context): NativeRuntimeEvent? {
   val level = prefs.getString(KEY_PENDING_RUNTIME_LEVEL, null) ?: return null
   val message = prefs.getString(KEY_PENDING_RUNTIME_MESSAGE, null) ?: return null
   val source = prefs.getString(KEY_PENDING_RUNTIME_SOURCE, "native") ?: "native"
+  val syncEnabledRaw = prefs.getString(KEY_PENDING_RUNTIME_SYNC_ENABLED, null)
+  val syncEnabled = when (syncEnabledRaw) {
+    "true" -> true
+    "false" -> false
+    else -> null
+  }
 
   prefs.edit()
     .remove(KEY_PENDING_RUNTIME_LEVEL)
     .remove(KEY_PENDING_RUNTIME_MESSAGE)
     .remove(KEY_PENDING_RUNTIME_SOURCE)
+    .remove(KEY_PENDING_RUNTIME_SYNC_ENABLED)
     .apply()
 
-  return NativeRuntimeEvent(level = level, message = message, source = source)
+  return NativeRuntimeEvent(level = level, message = message, source = source, syncEnabled = syncEnabled)
 }
