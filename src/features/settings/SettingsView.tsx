@@ -7,6 +7,8 @@ type SettingsViewProps = {
   onDeviceNameOverrideChange: (value: string) => void;
   backgroundModeEnabled: boolean;
   onBackgroundModeEnabledChange: (value: boolean) => void;
+  windowsStartOnLogin: boolean;
+  onWindowsStartOnLoginChange: (value: boolean) => void;
   onSaveSettings: () => void;
   saveMessage: string;
 };
@@ -20,6 +22,8 @@ export function SettingsView({
   onDeviceNameOverrideChange,
   backgroundModeEnabled,
   onBackgroundModeEnabledChange,
+  windowsStartOnLogin,
+  onWindowsStartOnLoginChange,
   onSaveSettings,
   saveMessage,
 }: SettingsViewProps) {
@@ -84,6 +88,20 @@ export function SettingsView({
         <p className="settings-hint">
           Android first-run note: allow notification and nearby-network permission prompts to keep discovery and
           background reliability stable on Android 13+.
+        </p>
+
+        <label className="settings-checkbox-row" htmlFor="windowsStartOnLogin">
+          <input
+            id="windowsStartOnLogin"
+            type="checkbox"
+            checked={windowsStartOnLogin}
+            onChange={(event) => onWindowsStartOnLoginChange(event.target.checked)}
+          />
+          <span>Start ClipSync on Windows login</span>
+        </label>
+
+        <p className="settings-hint">
+          Windows desktop only: when enabled, ClipSync is configured to launch automatically at user sign-in.
         </p>
 
         <button onClick={onSaveSettings} className="settings-save-btn">

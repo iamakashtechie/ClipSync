@@ -20,7 +20,7 @@ use domain::state::AppState;
 pub fn run() {
     let initial_state = Arc::new(Mutex::new(AppState::default()));
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .manage(initial_state)
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -35,7 +35,17 @@ pub fn run() {
             get_settings,
             save_settings,
             validate_pairing
-        ])
+        ]);
+
+    #[cfg(target_os = "windows")]
+    {
+        builder = builder.plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ));
+    }
+
+    builder
         .setup(|app| {
             app::initialize(app.handle()).map_err(|e| e.into())
         })

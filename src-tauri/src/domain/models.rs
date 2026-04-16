@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
 pub struct AppSettings {
     pub max_image_size_kb: u32,
     pub pairing_code: String,
     pub device_name_override: String,
     pub background_mode_enabled: bool,
+    pub windows_start_on_login: bool,
 }
 
 impl Default for AppSettings {
@@ -15,6 +17,7 @@ impl Default for AppSettings {
             pairing_code: "".to_string(),
             device_name_override: "".to_string(),
             background_mode_enabled: true,
+            windows_start_on_login: false,
         }
     }
 }

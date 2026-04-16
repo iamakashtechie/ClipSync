@@ -57,6 +57,8 @@ export default function AppShell() {
             onDeviceNameOverrideChange={controller.setDeviceNameOverride}
             backgroundModeEnabled={controller.backgroundModeEnabled}
             onBackgroundModeEnabledChange={controller.setBackgroundModeEnabled}
+            windowsStartOnLogin={controller.windowsStartOnLogin}
+            onWindowsStartOnLoginChange={controller.setWindowsStartOnLogin}
             onSaveSettings={controller.onSaveSettings}
             saveMessage={controller.saveMessage}
           />

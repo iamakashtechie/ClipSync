@@ -56,6 +56,7 @@ export type SettingsResponse = {
   pairing_code: string;
   device_name_override: string;
   background_mode_enabled: boolean;
+  windows_start_on_login: boolean;
 };
 
 export type IncomingImage = {

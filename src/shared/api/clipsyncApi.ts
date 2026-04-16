@@ -38,6 +38,7 @@ export async function saveSettings(payload: {
   pairingCode: string;
   deviceNameOverride: string;
   backgroundModeEnabled: boolean;
+  windowsStartOnLogin: boolean;
 }): Promise<void> {
   await invoke('save_settings', payload);
 }

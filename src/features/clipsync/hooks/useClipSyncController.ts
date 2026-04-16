@@ -117,6 +117,14 @@ const DEFAULT_VALIDATION_CASES: ValidationCase[] = [
     notes: '',
     last_run_at: '',
   },
+  {
+    id: 'windows_start_on_login',
+    title: 'Windows start on login',
+    description: 'Windows setting persists and app autostart is enabled/disabled correctly after save and reboot.',
+    result: 'not-run',
+    notes: '',
+    last_run_at: '',
+  },
 ];
 
 function loadValidationCases(): ValidationCase[] {
@@ -160,6 +168,7 @@ export function useClipSyncController() {
   const [pairingCode, setPairingCode] = useState('');
   const [deviceNameOverride, setDeviceNameOverride] = useState('');
   const [backgroundModeEnabled, setBackgroundModeEnabled] = useState(true);
+  const [windowsStartOnLogin, setWindowsStartOnLogin] = useState(false);
 
   const [unlockCode, setUnlockCode] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
@@ -256,6 +265,7 @@ export function useClipSyncController() {
         setPairingCode(settings.pairing_code);
         setDeviceNameOverride(settings.device_name_override ?? '');
         setBackgroundModeEnabled(settings.background_mode_enabled ?? true);
+        setWindowsStartOnLogin(settings.windows_start_on_login ?? false);
         uiLog('SUCCESS', 'SETTINGS_LOADED');
       } catch (error) {
         uiLog('FAILED', 'GET_SETTINGS', String(error));
@@ -632,12 +642,17 @@ export function useClipSyncController() {
         pairingCode,
         deviceNameOverride,
         backgroundModeEnabled,
+        windowsStartOnLogin,
       });
       syncAndroidBackgroundPolicy(backgroundModeEnabled);
       setSaveMessage('Settings saved. Device name update may require app restart for discovery name refresh.');
       setPaired(false);
       setSyncEnabled(false);
-      uiLog('SUCCESS', 'SAVE_SETTINGS', `max_image_size_kb=${maxImageSizeKb} bg_mode=${backgroundModeEnabled}`);
+      uiLog(
+        'SUCCESS',
+        'SAVE_SETTINGS',
+        `max_image_size_kb=${maxImageSizeKb} bg_mode=${backgroundModeEnabled} windows_start_on_login=${windowsStartOnLogin}`,
+      );
     } catch (error) {
       uiLog('FAILED', 'SAVE_SETTINGS', String(error));
       setSaveMessage('Failed to save settings.');
@@ -824,6 +839,8 @@ export function useClipSyncController() {
     setDeviceNameOverride,
     backgroundModeEnabled,
     setBackgroundModeEnabled,
+    windowsStartOnLogin,
+    setWindowsStartOnLogin,
     unlockCode,
     setUnlockCode,
     saveMessage,

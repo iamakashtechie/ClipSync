@@ -83,6 +83,7 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Android manifest now includes nearby-network permission declarations with API-level compatibility handling.
 - Boot receiver now follows background-mode policy and emits boot runtime diagnostics to the app UI.
 - Android foreground notification now includes `Pause Sync` / `Resume Sync` action with runtime status propagation.
+- Windows settings now include `Start ClipSync on Windows login` with persisted autostart behavior.
 
 ## What is not implemented yet
 
@@ -94,6 +95,12 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Foreground notification provides one action button that flips between `Pause Sync` and `Resume Sync`.
 - Action is idempotent: pressing pause while already paused (or resume while active) keeps state stable and logs an info event.
 - Action writes native sync state immediately and emits runtime event so dashboard/native status can reflect the toggle.
+
+## Windows autostart behavior (Phase B2 in progress)
+
+- Settings now include `Start ClipSync on Windows login`.
+- Save applies autostart immediately on Windows and persists choice in app settings.
+- App startup also reconciles autostart state to match saved setting.
 
 ## Boot auto-start behavior (Phase A3 in progress)
 
@@ -254,6 +261,8 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 30. With background mode ON, press `Pause Sync` in Android notification and confirm notification text switches to paused state.
 31. While paused, copy text/image and confirm no new native clipboard send events are emitted.
 32. Press `Resume Sync` in notification and confirm clipboard sends resume and dashboard sync state updates.
+33. On Windows desktop, enable `Start ClipSync on Windows login`, save settings, restart Windows session, and confirm ClipSync starts automatically.
+34. Disable `Start ClipSync on Windows login`, save settings, restart Windows session, and confirm ClipSync does not auto-start.
 
 ## Notes
 

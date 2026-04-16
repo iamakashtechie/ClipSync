@@ -6,8 +6,12 @@ use crate::services::logging::{format_backend_event, log_backend, log_backend_ev
 use crate::services::settings::{effective_device_name, load_settings};
 use tauri::Manager;
 
+#[cfg(target_os = "windows")]
+use tauri_plugin_autostart::ManagerExt;
+
 pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
     let settings = load_settings(app);
+    let windows_start_on_login = settings.windows_start_on_login;
     let host_name = whoami::fallible::hostname().unwrap_or_else(|_| "unknown-host".to_string());
     let device_name = effective_device_name(&settings, &host_name);
 
@@ -24,6 +28,36 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
     log_backend(&startup_event);
     push_diagnostic(&mut s, startup_event);
     drop(s);
+
+    #[cfg(target_os = "windows")]
+    {
+        let autostart_result = if windows_start_on_login {
+            app.autolaunch().enable()
+        } else {
+            app.autolaunch().disable()
+        };
+
+        match autostart_result {
+            Ok(_) => {
+                log_backend_event(
+                    "SUCCESS",
+                    "WINDOWS_AUTOSTART_APPLY",
+                    if windows_start_on_login {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    },
+                );
+            }
+            Err(err) => {
+                log_backend_event(
+                    "FAILED",
+                    "WINDOWS_AUTOSTART_APPLY",
+                    &format!("failed to apply startup setting: {err}"),
+                );
+            }
+        }
+    }
 
     let state_clone: SharedState = app.state::<SharedState>().inner().clone();
     start_mdns_discovery(state_clone.clone(), device_name.clone());

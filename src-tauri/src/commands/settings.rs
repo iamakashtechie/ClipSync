@@ -1,5 +1,8 @@
 use tauri::State;
 
+#[cfg(target_os = "windows")]
+use tauri_plugin_autostart::ManagerExt;
+
 use crate::domain::models::AppSettings;
 use crate::domain::state::SharedState;
 use crate::services::logging::{format_backend_event, log_backend, push_diagnostic};
@@ -37,6 +40,7 @@ pub fn save_settings(
     pairing_code: String,
     device_name_override: String,
     background_mode_enabled: bool,
+    windows_start_on_login: bool,
     state: State<'_, SharedState>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
@@ -50,12 +54,33 @@ pub fn save_settings(
         pairing_code,
         device_name_override,
         background_mode_enabled,
+        windows_start_on_login,
     };
     let host_name = whoami::fallible::hostname().unwrap_or_else(|_| "unknown-host".to_string());
     s.device_name = effective_device_name(&s.settings, &host_name);
     s.transport_status.clear();
     s.paired = false;
     s.sync_enabled = false;
+
+    #[cfg(target_os = "windows")]
+    {
+        let apply_result = if s.settings.windows_start_on_login {
+            app.autolaunch().enable()
+        } else {
+            app.autolaunch().disable()
+        };
+
+        if let Err(err) = apply_result {
+            let event = format_backend_event(
+                "FAILED",
+                "WINDOWS_AUTOSTART_APPLY",
+                &format!("failed to apply startup setting: {err}"),
+            );
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
+        }
+    }
+
     let result = save_settings_to_disk(&app, &s.settings);
     match &result {
         Ok(_) => {
@@ -63,8 +88,11 @@ pub fn save_settings(
                 "SUCCESS",
                 "SAVE_SETTINGS",
                 &format!(
-                    "max_image_size_kb={} device_name={} background_mode_enabled={}",
-                    s.settings.max_image_size_kb, s.device_name, s.settings.background_mode_enabled
+                    "max_image_size_kb={} device_name={} background_mode_enabled={} windows_start_on_login={}",
+                    s.settings.max_image_size_kb,
+                    s.device_name,
+                    s.settings.background_mode_enabled,
+                    s.settings.windows_start_on_login
                 ),
             );
             log_backend(&event);
