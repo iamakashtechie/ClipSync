@@ -62,7 +62,11 @@ pub async fn attempt_outbound_handshake(peer_name: String, addr: String, state: 
         return;
     };
 
-    if ws_stream.send(Message::Text(hello_text.into())).await.is_err() {
+    if ws_stream
+        .send(Message::Text(hello_text.into()))
+        .await
+        .is_err()
+    {
         log_backend_event_with_state(
             &state,
             "FAILED",
@@ -167,7 +171,11 @@ pub async fn send_transport_payload_to_peer(
         let _ = ws_stream.close(None).await;
         return;
     };
-    if ws_stream.send(Message::Text(hello_text.into())).await.is_err() {
+    if ws_stream
+        .send(Message::Text(hello_text.into()))
+        .await
+        .is_err()
+    {
         log_backend_event_with_state(
             &state,
             "FAILED",
@@ -220,13 +228,20 @@ pub async fn send_transport_payload_to_peer(
             &state,
             "FAILED",
             "PAYLOAD_SEND",
-            &format!("peer={} {} payload serialization failed", peer_name, payload_label),
+            &format!(
+                "peer={} {} payload serialization failed",
+                peer_name, payload_label
+            ),
         );
         let _ = ws_stream.close(None).await;
         return;
     };
 
-    if ws_stream.send(Message::Text(sync_text.into())).await.is_ok() {
+    if ws_stream
+        .send(Message::Text(sync_text.into()))
+        .await
+        .is_ok()
+    {
         let peer_for_diag = peer_name.clone();
         set_transport_status(
             &state,
@@ -249,9 +264,16 @@ pub async fn send_transport_payload_to_peer(
             &state,
             "FAILED",
             "PAYLOAD_SEND",
-            &format!("peer={} authenticated but {} send failed", peer_name, payload_label),
+            &format!(
+                "peer={} authenticated but {} send failed",
+                peer_name, payload_label
+            ),
         );
-        set_transport_status(&state, peer_name, "authenticated but send failed".to_string());
+        set_transport_status(
+            &state,
+            peer_name,
+            "authenticated but send failed".to_string(),
+        );
     }
 
     let _ = ws_stream.close(None).await;

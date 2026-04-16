@@ -57,6 +57,7 @@ export type SettingsResponse = {
   device_name_override: string;
   background_mode_enabled: boolean;
   windows_start_on_login: boolean;
+  dev_mode_enabled: boolean;
 };
 
 export type IncomingImage = {

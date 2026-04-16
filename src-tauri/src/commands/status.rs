@@ -43,7 +43,10 @@ pub fn get_status(state: State<'_, SharedState>) -> Result<serde_json::Value, St
 }
 
 #[tauri::command]
-pub fn report_app_visibility(is_foreground: bool, state: State<'_, SharedState>) -> Result<(), String> {
+pub fn report_app_visibility(
+    is_foreground: bool,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     s.is_app_foreground = is_foreground;
     s.last_visibility_report_ms = now_ms();

@@ -9,6 +9,8 @@ type SettingsViewProps = {
   onBackgroundModeEnabledChange: (value: boolean) => void;
   windowsStartOnLogin: boolean;
   onWindowsStartOnLoginChange: (value: boolean) => void;
+  devModeEnabled: boolean;
+  onDevModeEnabledChange: (value: boolean) => void;
   onSaveSettings: () => void;
   saveMessage: string;
 };
@@ -24,6 +26,8 @@ export function SettingsView({
   onBackgroundModeEnabledChange,
   windowsStartOnLogin,
   onWindowsStartOnLoginChange,
+  devModeEnabled,
+  onDevModeEnabledChange,
   onSaveSettings,
   saveMessage,
 }: SettingsViewProps) {
@@ -102,6 +106,20 @@ export function SettingsView({
 
         <p className="settings-hint">
           Windows desktop only: when enabled, ClipSync is configured to launch automatically at user sign-in.
+        </p>
+
+        <label className="settings-checkbox-row" htmlFor="devModeEnabled">
+          <input
+            id="devModeEnabled"
+            type="checkbox"
+            checked={devModeEnabled}
+            onChange={(event) => onDevModeEnabledChange(event.target.checked)}
+          />
+          <span>Developer Mode</span>
+        </label>
+
+        <p className="settings-hint">
+          Enabling this reveals manual testing tools, advanced diagnostics, and validation tabs.
         </p>
 
         <button onClick={onSaveSettings} className="settings-save-btn">

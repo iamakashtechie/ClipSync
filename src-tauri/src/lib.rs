@@ -55,9 +55,7 @@ pub fn run() {
                 }
             }
         })
-        .setup(|app| {
-            app::initialize(app.handle()).map_err(|e| e.into())
-        })
+        .setup(|app| app::initialize(app.handle()).map_err(|e| e.into()))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -177,6 +177,7 @@ export function useClipSyncController() {
   const [deviceNameOverride, setDeviceNameOverride] = useState('');
   const [backgroundModeEnabled, setBackgroundModeEnabled] = useState(true);
   const [windowsStartOnLogin, setWindowsStartOnLogin] = useState(false);
+  const [devModeEnabled, setDevModeEnabled] = useState(false);
 
   const [unlockCode, setUnlockCode] = useState('');
   const [saveMessage, setSaveMessage] = useState('');
@@ -274,6 +275,7 @@ export function useClipSyncController() {
         setDeviceNameOverride(settings.device_name_override ?? '');
         setBackgroundModeEnabled(settings.background_mode_enabled ?? true);
         setWindowsStartOnLogin(settings.windows_start_on_login ?? false);
+        setDevModeEnabled(settings.dev_mode_enabled ?? false);
         uiLog('SUCCESS', 'SETTINGS_LOADED');
       } catch (error) {
         uiLog('FAILED', 'GET_SETTINGS', String(error));
@@ -651,6 +653,7 @@ export function useClipSyncController() {
         deviceNameOverride,
         backgroundModeEnabled,
         windowsStartOnLogin,
+        devModeEnabled,
       });
       syncAndroidBackgroundPolicy(backgroundModeEnabled);
       setSaveMessage('Settings saved. Device name update may require app restart for discovery name refresh.');
@@ -849,6 +852,8 @@ export function useClipSyncController() {
     setBackgroundModeEnabled,
     windowsStartOnLogin,
     setWindowsStartOnLogin,
+    devModeEnabled,
+    setDevModeEnabled,
     unlockCode,
     setUnlockCode,
     saveMessage,

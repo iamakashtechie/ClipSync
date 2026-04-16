@@ -8,6 +8,7 @@ pub struct AppSettings {
     pub device_name_override: String,
     pub background_mode_enabled: bool,
     pub windows_start_on_login: bool,
+    pub dev_mode_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -18,6 +19,7 @@ impl Default for AppSettings {
             device_name_override: "".to_string(),
             background_mode_enabled: true,
             windows_start_on_login: false,
+            dev_mode_enabled: false,
         }
     }
 }

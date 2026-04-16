@@ -2,9 +2,12 @@ use crate::config::CLIPSYNC_WS_PORT;
 use crate::domain::state::SharedState;
 use crate::network::discovery::{start_mdns_discovery, start_udp_fallback_discovery};
 use crate::network::transport::{start_transport_handshake_loop, start_transport_server};
-use crate::services::logging::{format_backend_event, log_backend, log_backend_event, now_ms, push_diagnostic};
+use crate::services::logging::{
+    format_backend_event, log_backend, log_backend_event, now_ms, push_diagnostic,
+};
 use crate::services::settings::{effective_device_name, load_settings};
 use tauri::Manager;
+use std::thread;
 
 #[cfg(target_os = "windows")]
 use tauri_plugin_autostart::ManagerExt;
@@ -73,13 +76,14 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
         });
     }
 
-    let state_clone: SharedState = app.state::<SharedState>().inner().clone();
-    start_mdns_discovery(state_clone.clone(), device_name.clone());
-    start_udp_fallback_discovery(state_clone, device_name);
-
-    let transport_state: SharedState = app.state::<SharedState>().inner().clone();
-    start_transport_server(transport_state.clone());
-    start_transport_handshake_loop(transport_state);
+    let discovery_state: SharedState = app.state::<SharedState>().inner().clone();
+    let discovery_name = device_name.clone();
+    thread::spawn(move || {
+        start_mdns_discovery(discovery_state.clone(), discovery_name.clone());
+        start_udp_fallback_discovery(discovery_state.clone(), discovery_name);
+        start_transport_server(discovery_state.clone());
+        start_transport_handshake_loop(discovery_state);
+    });
 
     log_backend_event("SUCCESS", "APP_STARTUP", "ClipSync v0.1 started");
     Ok(())

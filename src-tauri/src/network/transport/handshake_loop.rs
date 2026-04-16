@@ -29,7 +29,8 @@ pub fn start_transport_handshake_loop(state: SharedState) {
                     s.discovered_last_seen_ms.remove(&name);
                     s.transport_status.remove(&name);
                     s.stale_peers_pruned += 1;
-                    let event = format_backend_event("INFO", "PEER_PRUNED", &format!("peer={}", name));
+                    let event =
+                        format_backend_event("INFO", "PEER_PRUNED", &format!("peer={}", name));
                     log_backend(&event);
                     push_diagnostic(&mut s, event);
                 }
@@ -51,7 +52,11 @@ pub fn start_transport_handshake_loop(state: SharedState) {
             for (peer_name, addr) in peers {
                 let host = addr.split(':').next().unwrap_or_default();
                 if !is_private_or_loopback(host) {
-                    set_transport_status(&state, peer_name, "skipped: non-local address".to_string());
+                    set_transport_status(
+                        &state,
+                        peer_name,
+                        "skipped: non-local address".to_string(),
+                    );
                     continue;
                 }
                 attempt_outbound_handshake(peer_name, addr, state.clone()).await;

@@ -10,11 +10,12 @@ export default function AppShell() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col">
-      <AppHeader currentTab={controller.currentTab} onTabChange={controller.setCurrentTab} />
+      <AppHeader currentTab={controller.currentTab} onTabChange={controller.setCurrentTab} devModeEnabled={controller.devModeEnabled} />
 
       <div className="flex-1 p-8">
         {controller.currentTab === 'dashboard' ? (
           <DashboardView
+            devModeEnabled={controller.devModeEnabled}
             status={controller.status}
             paired={controller.paired}
             unlockCode={controller.unlockCode}
@@ -59,6 +60,8 @@ export default function AppShell() {
             onBackgroundModeEnabledChange={controller.setBackgroundModeEnabled}
             windowsStartOnLogin={controller.windowsStartOnLogin}
             onWindowsStartOnLoginChange={controller.setWindowsStartOnLogin}
+            devModeEnabled={controller.devModeEnabled}
+            onDevModeEnabledChange={controller.setDevModeEnabled}
             onSaveSettings={controller.onSaveSettings}
             saveMessage={controller.saveMessage}
           />

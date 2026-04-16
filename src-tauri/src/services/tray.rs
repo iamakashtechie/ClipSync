@@ -61,7 +61,11 @@ fn toggle_sync_from_tray(app: &tauri::AppHandle, state: &SharedState) {
             let event = format_backend_event(
                 "SUCCESS",
                 "SYNC_TOGGLE_TRAY",
-                if s.sync_enabled { "enabled" } else { "disabled" },
+                if s.sync_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
             );
             push_diagnostic(&mut s, event.clone());
             event_to_log = Some(event);

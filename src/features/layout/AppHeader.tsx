@@ -3,9 +3,10 @@ import type { AppTab } from '../../shared/types/clipsync';
 type AppHeaderProps = {
   currentTab: AppTab;
   onTabChange: (tab: AppTab) => void;
+  devModeEnabled?: boolean;
 };
 
-export function AppHeader({ currentTab, onTabChange }: AppHeaderProps) {
+export function AppHeader({ currentTab, onTabChange, devModeEnabled = false }: AppHeaderProps) {
   return (
     <div className="bg-gray-900 border-b border-gray-800 px-6 py-4 flex items-center justify-between">
       <div className="flex items-center gap-3">
@@ -22,14 +23,16 @@ export function AppHeader({ currentTab, onTabChange }: AppHeaderProps) {
         >
           Dashboard
         </button>
-        <button
-          role="tab"
-          aria-selected={currentTab === 'validation'}
-          onClick={() => onTabChange('validation')}
-          className={`px-6 py-2 rounded-xl font-medium ${currentTab === 'validation' ? 'bg-gray-900 text-white' : 'text-gray-400'}`}
-        >
-          Validation
-        </button>
+        {devModeEnabled && (
+          <button
+            role="tab"
+            aria-selected={currentTab === 'validation'}
+            onClick={() => onTabChange('validation')}
+            className={`px-6 py-2 rounded-xl font-medium ${currentTab === 'validation' ? 'bg-gray-900 text-white' : 'text-gray-400'}`}
+          >
+            Validation
+          </button>
+        )}
         <button
           role="tab"
           aria-selected={currentTab === 'settings'}

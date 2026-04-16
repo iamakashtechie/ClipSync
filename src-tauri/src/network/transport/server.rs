@@ -15,7 +15,10 @@ use crate::services::logging::{
 };
 use crate::services::security::should_accept_incoming;
 
-pub async fn handle_incoming_transport_connection(stream: tokio::net::TcpStream, state: SharedState) {
+pub async fn handle_incoming_transport_connection(
+    stream: tokio::net::TcpStream,
+    state: SharedState,
+) {
     let Ok(peer_addr) = stream.peer_addr() else {
         return;
     };

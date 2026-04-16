@@ -32,7 +32,8 @@ pub fn consume_remote_text(state: State<'_, SharedState>) -> Result<Option<Strin
     let mut s = state.lock().map_err(|e| e.to_string())?;
     let consumed = s.pending_remote_text.take();
     if let Some(text) = &consumed {
-        let event = format_backend_event("SUCCESS", "TEXT_CONSUMED", &format!("len={}", text.len()));
+        let event =
+            format_backend_event("SUCCESS", "TEXT_CONSUMED", &format!("len={}", text.len()));
         log_backend(&event);
         push_diagnostic(&mut s, event);
     }
@@ -40,14 +41,20 @@ pub fn consume_remote_text(state: State<'_, SharedState>) -> Result<Option<Strin
 }
 
 #[tauri::command]
-pub fn consume_remote_image(state: State<'_, SharedState>) -> Result<Option<IncomingImage>, String> {
+pub fn consume_remote_image(
+    state: State<'_, SharedState>,
+) -> Result<Option<IncomingImage>, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     let consumed = s.pending_remote_image.take();
     if let Some(image) = &consumed {
         let event = format_backend_event(
             "SUCCESS",
             "IMAGE_CONSUMED",
-            &format!("mime_type={} bytes(base64)={}", image.mime_type, image.image_base64.len()),
+            &format!(
+                "mime_type={} bytes(base64)={}",
+                image.mime_type,
+                image.image_base64.len()
+            ),
         );
         log_backend(&event);
         push_diagnostic(&mut s, event);
@@ -56,7 +63,10 @@ pub fn consume_remote_image(state: State<'_, SharedState>) -> Result<Option<Inco
 }
 
 #[tauri::command]
-pub async fn push_local_text_clipboard(content: String, state: State<'_, SharedState>) -> Result<(), String> {
+pub async fn push_local_text_clipboard(
+    content: String,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
     if content.trim().is_empty() {
         log_backend_event_with_state(state.inner(), "FAILED", "TEXT_SEND_LOCAL", "empty payload");
         return Ok(());
@@ -69,7 +79,8 @@ pub async fn push_local_text_clipboard(content: String, state: State<'_, SharedS
 
         if s.recent_hashes.contains(&hash) {
             s.sync_dropped_count += 1;
-            let event = format_backend_event("FAILED", "TEXT_SEND_LOCAL", "duplicate local hash dropped");
+            let event =
+                format_backend_event("FAILED", "TEXT_SEND_LOCAL", "duplicate local hash dropped");
             log_backend(&event);
             push_diagnostic(&mut s, event);
             return Ok(());
@@ -89,7 +100,9 @@ pub async fn push_local_text_clipboard(content: String, state: State<'_, SharedS
             discovered,
             hash,
             timestamp_ms,
-            s.sync_enabled && s.paired && (s.is_app_foreground || s.settings.background_mode_enabled),
+            s.sync_enabled
+                && s.paired
+                && (s.is_app_foreground || s.settings.background_mode_enabled),
         )
     };
 
@@ -116,7 +129,11 @@ pub async fn push_local_text_clipboard(content: String, state: State<'_, SharedS
     for (peer_name, addr) in peers {
         let host = addr.split(':').next().unwrap_or_default();
         if !is_private_or_loopback(host) {
-            set_transport_status(state.inner(), peer_name, "skipped: non-local address".to_string());
+            set_transport_status(
+                state.inner(),
+                peer_name,
+                "skipped: non-local address".to_string(),
+            );
             continue;
         }
 
@@ -146,7 +163,12 @@ pub async fn push_local_image_payload(
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
     if image_base64.trim().is_empty() || mime_type.trim().is_empty() {
-        log_backend_event_with_state(state.inner(), "FAILED", "IMAGE_SEND_LOCAL", "empty image payload or mime type");
+        log_backend_event_with_state(
+            state.inner(),
+            "FAILED",
+            "IMAGE_SEND_LOCAL",
+            "empty image payload or mime type",
+        );
         return Ok(());
     }
 
@@ -166,7 +188,8 @@ pub async fn push_local_image_payload(
         let max_image_bytes = (s.settings.max_image_size_kb as usize) * 1024;
 
         if image_bytes == 0 {
-            let event = format_backend_event("FAILED", "IMAGE_SEND_LOCAL", "invalid base64 image payload");
+            let event =
+                format_backend_event("FAILED", "IMAGE_SEND_LOCAL", "invalid base64 image payload");
             log_backend(&event);
             push_diagnostic(&mut s, event);
             return Ok(());
@@ -191,7 +214,8 @@ pub async fn push_local_image_payload(
 
         if s.recent_hashes.contains(&hash) {
             s.sync_dropped_count += 1;
-            let event = format_backend_event("FAILED", "IMAGE_SEND_LOCAL", "duplicate local hash dropped");
+            let event =
+                format_backend_event("FAILED", "IMAGE_SEND_LOCAL", "duplicate local hash dropped");
             log_backend(&event);
             push_diagnostic(&mut s, event);
             return Ok(());
@@ -211,7 +235,9 @@ pub async fn push_local_image_payload(
             discovered,
             hash,
             timestamp_ms,
-            s.sync_enabled && s.paired && (s.is_app_foreground || s.settings.background_mode_enabled),
+            s.sync_enabled
+                && s.paired
+                && (s.is_app_foreground || s.settings.background_mode_enabled),
         )
     };
 
@@ -238,7 +264,11 @@ pub async fn push_local_image_payload(
     for (peer_name, addr) in peers {
         let host = addr.split(':').next().unwrap_or_default();
         if !is_private_or_loopback(host) {
-            set_transport_status(state.inner(), peer_name, "skipped: non-local address".to_string());
+            set_transport_status(
+                state.inner(),
+                peer_name,
+                "skipped: non-local address".to_string(),
+            );
             continue;
         }
 
