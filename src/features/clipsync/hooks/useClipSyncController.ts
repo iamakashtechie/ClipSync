@@ -125,6 +125,14 @@ const DEFAULT_VALIDATION_CASES: ValidationCase[] = [
     notes: '',
     last_run_at: '',
   },
+  {
+    id: 'windows_tray_controls',
+    title: 'Windows tray controls',
+    description: 'Tray menu actions Open, Sync On/Off, and Quit work predictably with window hide/restore behavior.',
+    result: 'not-run',
+    notes: '',
+    last_run_at: '',
+  },
 ];
 
 function loadValidationCases(): ValidationCase[] {

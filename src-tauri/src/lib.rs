@@ -46,6 +46,15 @@ pub fn run() {
     }
 
     builder
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "windows")]
+            {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             app::initialize(app.handle()).map_err(|e| e.into())
         })

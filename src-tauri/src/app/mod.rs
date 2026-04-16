@@ -9,6 +9,9 @@ use tauri::Manager;
 #[cfg(target_os = "windows")]
 use tauri_plugin_autostart::ManagerExt;
 
+#[cfg(target_os = "windows")]
+use crate::services::tray::{refresh_tray_state, setup_windows_tray};
+
 pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
     let settings = load_settings(app);
     let windows_start_on_login = settings.windows_start_on_login;
@@ -31,6 +34,8 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
+        setup_windows_tray(app, app.state::<SharedState>().inner().clone())?;
+
         let autostart_result = if windows_start_on_login {
             app.autolaunch().enable()
         } else {
@@ -57,6 +62,15 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
                 );
             }
         }
+
+        let app_handle = app.clone();
+        let tray_state = app.state::<SharedState>().inner().clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                refresh_tray_state(&app_handle, &tray_state);
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        });
     }
 
     let state_clone: SharedState = app.state::<SharedState>().inner().clone();

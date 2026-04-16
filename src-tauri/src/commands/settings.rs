@@ -8,8 +8,11 @@ use crate::domain::state::SharedState;
 use crate::services::logging::{format_backend_event, log_backend, push_diagnostic};
 use crate::services::settings::{effective_device_name, save_settings_to_disk};
 
+#[cfg(target_os = "windows")]
+use crate::services::tray::refresh_tray_state;
+
 #[tauri::command]
-pub fn toggle_sync(enabled: bool, state: State<'_, SharedState>) -> Result<(), String> {
+pub fn toggle_sync(enabled: bool, state: State<'_, SharedState>, app: tauri::AppHandle) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     if enabled && !s.paired {
         let event = format_backend_event("FAILED", "SYNC_TOGGLE", "blocked: pairing required");
@@ -25,6 +28,8 @@ pub fn toggle_sync(enabled: bool, state: State<'_, SharedState>) -> Result<(), S
     );
     log_backend(&event);
     push_diagnostic(&mut s, event);
+    #[cfg(target_os = "windows")]
+    refresh_tray_state(&app, state.inner());
     Ok(())
 }
 
@@ -104,11 +109,13 @@ pub fn save_settings(
             push_diagnostic(&mut s, event);
         }
     }
+    #[cfg(target_os = "windows")]
+    refresh_tray_state(&app, state.inner());
     result
 }
 
 #[tauri::command]
-pub fn validate_pairing(code: String, state: State<'_, SharedState>) -> Result<bool, String> {
+pub fn validate_pairing(code: String, state: State<'_, SharedState>, app: tauri::AppHandle) -> Result<bool, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     let ok = !s.settings.pairing_code.is_empty() && s.settings.pairing_code == code;
     s.paired = ok;
@@ -122,5 +129,7 @@ pub fn validate_pairing(code: String, state: State<'_, SharedState>) -> Result<b
     };
     log_backend(&event);
     push_diagnostic(&mut s, event);
+    #[cfg(target_os = "windows")]
+    refresh_tray_state(&app, state.inner());
     Ok(ok)
 }

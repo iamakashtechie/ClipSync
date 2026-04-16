@@ -84,6 +84,7 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Boot receiver now follows background-mode policy and emits boot runtime diagnostics to the app UI.
 - Android foreground notification now includes `Pause Sync` / `Resume Sync` action with runtime status propagation.
 - Windows settings now include `Start ClipSync on Windows login` with persisted autostart behavior.
+- Windows tray icon now provides `Open`, `Sync On/Off`, and `Quit` controls with connection-aware tooltip updates.
 
 ## What is not implemented yet
 
@@ -101,6 +102,12 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Settings now include `Start ClipSync on Windows login`.
 - Save applies autostart immediately on Windows and persists choice in app settings.
 - App startup also reconciles autostart state to match saved setting.
+
+## Windows tray behavior (Phase B3 in progress)
+
+- Tray menu includes: `Open`, `Sync On/Off`, and `Quit`.
+- Tray tooltip is refreshed with runtime connection state (`Sync`, discovered peer count, authenticated peer count).
+- Closing main window hides app to tray on Windows; `Open` restores and focuses the main window.
 
 ## Boot auto-start behavior (Phase A3 in progress)
 
@@ -263,6 +270,10 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 32. Press `Resume Sync` in notification and confirm clipboard sends resume and dashboard sync state updates.
 33. On Windows desktop, enable `Start ClipSync on Windows login`, save settings, restart Windows session, and confirm ClipSync starts automatically.
 34. Disable `Start ClipSync on Windows login`, save settings, restart Windows session, and confirm ClipSync does not auto-start.
+35. On Windows, close app window and confirm app stays available in tray instead of fully exiting.
+36. From tray menu, click `Open` and confirm main window is restored and focused.
+37. From tray menu, click `Sync On/Off` and confirm dashboard sync state and tray tooltip reflect the new state.
+38. From tray menu, click `Quit` and confirm process exits completely.
 
 ## Notes
 
