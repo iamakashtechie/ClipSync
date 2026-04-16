@@ -1,5 +1,5 @@
 import type { ChangeEventHandler } from 'react';
-import type { RuntimeHealth, SyncStats, SyncStatus } from '../../shared/types/clipsync';
+import type { NativeBridgeStats, RuntimeHealth, SyncStats, SyncStatus } from '../../shared/types/clipsync';
 
 type DashboardViewProps = {
   status: SyncStatus;
@@ -20,6 +20,7 @@ type DashboardViewProps = {
   onManualSync: () => void;
   remoteTextPreview: string;
   nativeBridgeStatus: string;
+  nativeBridgeStats: NativeBridgeStats;
   onPickManualImage: ChangeEventHandler<HTMLInputElement>;
   manualImagePreview: string;
   onManualImageSync: () => void;
@@ -45,6 +46,7 @@ export function DashboardView({
   onManualSync,
   remoteTextPreview,
   nativeBridgeStatus,
+  nativeBridgeStats,
   onPickManualImage,
   manualImagePreview,
   onManualImageSync,
@@ -151,6 +153,17 @@ export function DashboardView({
         <div className="sync-stats-box">
           <div className="text-gray-400">Native Bridge Status (Android)</div>
           <div className="diagnostic-row">{nativeBridgeStatus}</div>
+          <div className="sync-stats-grid mt-4">
+            <div>Captured text: {nativeBridgeStats.captured_text}</div>
+            <div>Captured image: {nativeBridgeStats.captured_image}</div>
+            <div>Sent text: {nativeBridgeStats.sent_text}</div>
+            <div>Sent image: {nativeBridgeStats.sent_image}</div>
+            <div>Skipped: {nativeBridgeStats.skipped}</div>
+            <div>Failed: {nativeBridgeStats.failed}</div>
+            <div>Malformed: {nativeBridgeStats.malformed}</div>
+            <div>Last source: {nativeBridgeStats.last_source}</div>
+            <div>Last type: {nativeBridgeStats.last_type}</div>
+          </div>
         </div>
 
         <div className="manual-sync-box">

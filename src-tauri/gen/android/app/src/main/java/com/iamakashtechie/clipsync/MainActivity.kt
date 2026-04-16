@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Bundle
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import androidx.core.app.ActivityCompat
 import androidx.activity.enableEdgeToEdge
@@ -14,8 +15,13 @@ import android.content.Intent
 import org.json.JSONObject
 
 class MainActivity : TauriActivity() {
+  private val prefsName = "clipsync_native_bridge"
+  private val keyBackgroundModeEnabled = "background_mode_enabled"
+
   private val notificationPermissionReqCode = 1019
   private var webViewRef: WebView? = null
+  private var isAppForeground = true
+  private var backgroundModeEnabled = true
 
   private val clipboardReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -23,16 +29,21 @@ class MainActivity : TauriActivity() {
         return
       }
 
-      val text = intent.getStringExtra(CLIPSYNC_EXTRA_TEXT) ?: return
+      val type = intent.getStringExtra(CLIPSYNC_EXTRA_TYPE) ?: "text"
+      val text = intent.getStringExtra(CLIPSYNC_EXTRA_TEXT)
+      val mimeType = intent.getStringExtra(CLIPSYNC_EXTRA_MIME_TYPE)
+      val imageBase64 = intent.getStringExtra(CLIPSYNC_EXTRA_IMAGE_BASE64)
       val source = intent.getStringExtra(CLIPSYNC_EXTRA_SOURCE) ?: "native"
-      dispatchClipboardToWebView(text, source)
+      dispatchClipboardToWebView(type, source, text, mimeType, imageBase64)
     }
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
-    ensureForegroundServiceStarted()
+    val prefs = getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+    backgroundModeEnabled = prefs.getBoolean(keyBackgroundModeEnabled, true)
+    applyForegroundServicePolicy()
   }
 
   private fun ensureForegroundServiceStarted() {
@@ -53,6 +64,24 @@ class MainActivity : TauriActivity() {
     ContextCompat.startForegroundService(this, serviceIntent)
   }
 
+  private fun applyForegroundServicePolicy() {
+    val shouldRun = backgroundModeEnabled && !isAppForeground
+    if (shouldRun) {
+      ensureForegroundServiceStarted()
+    } else {
+      stopService(Intent(this, ClipSyncForegroundService::class.java))
+    }
+  }
+
+  private fun onBackgroundModeChanged(enabled: Boolean) {
+    backgroundModeEnabled = enabled
+    getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+      .edit()
+      .putBoolean(keyBackgroundModeEnabled, enabled)
+      .apply()
+    applyForegroundServicePolicy()
+  }
+
   override fun onRequestPermissionsResult(
     requestCode: Int,
     permissions: Array<out String>,
@@ -60,12 +89,14 @@ class MainActivity : TauriActivity() {
   ) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     if (requestCode == notificationPermissionReqCode) {
-      ensureForegroundServiceStarted()
+      applyForegroundServicePolicy()
     }
   }
 
   override fun onStart() {
     super.onStart()
+    isAppForeground = true
+    applyForegroundServicePolicy()
     ContextCompat.registerReceiver(
       this,
       clipboardReceiver,
@@ -75,6 +106,8 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onStop() {
+    isAppForeground = false
+    applyForegroundServicePolicy()
     runCatching {
       unregisterReceiver(clipboardReceiver)
     }
@@ -83,22 +116,69 @@ class MainActivity : TauriActivity() {
 
   override fun onResume() {
     super.onResume()
-    consumePendingNativeClipboard(this)?.let { (text, source) ->
-      dispatchClipboardToWebView(text, source)
+    isAppForeground = true
+    applyForegroundServicePolicy()
+    consumePendingNativeClipboard(this)?.let { payload ->
+      dispatchClipboardToWebView(
+        payload.type,
+        payload.source,
+        payload.text,
+        payload.mimeType,
+        payload.imageBase64,
+      )
     }
   }
 
   override fun onWebViewCreate(webView: WebView) {
     super.onWebViewCreate(webView)
+    webView.addJavascriptInterface(
+      ClipSyncAndroidPolicyBridge { enabled -> onBackgroundModeChanged(enabled) },
+      "ClipSyncAndroidPolicy",
+    )
     webViewRef = webView
-    consumePendingNativeClipboard(this)?.let { (text, source) ->
-      dispatchClipboardToWebView(text, source)
+    consumePendingNativeClipboard(this)?.let { payload ->
+      dispatchClipboardToWebView(
+        payload.type,
+        payload.source,
+        payload.text,
+        payload.mimeType,
+        payload.imageBase64,
+      )
     }
   }
 
-  private fun dispatchClipboardToWebView(text: String, source: String) {
+  private fun dispatchClipboardToWebView(
+    type: String,
+    source: String,
+    text: String?,
+    mimeType: String?,
+    imageBase64: String?,
+  ) {
     val webView = webViewRef ?: return
-    val js = "window.dispatchEvent(new CustomEvent('clipsync-native-clipboard', { detail: { text: ${JSONObject.quote(text)}, source: ${JSONObject.quote(source)}, timestampMs: Date.now() } }));"
+    val detail = JSONObject().apply {
+      put("type", type)
+      put("source", source)
+      put("timestampMs", System.currentTimeMillis())
+      if (!text.isNullOrEmpty()) {
+        put("text", text)
+      }
+      if (!mimeType.isNullOrEmpty()) {
+        put("mimeType", mimeType)
+      }
+      if (!imageBase64.isNullOrEmpty()) {
+        put("imageBase64", imageBase64)
+      }
+    }
+    val js = "window.dispatchEvent(new CustomEvent('clipsync-native-clipboard', { detail: $detail }));"
     webView.evaluateJavascript(js, null)
+  }
+}
+
+private class ClipSyncAndroidPolicyBridge(
+  private val onModeChanged: (Boolean) -> Unit,
+) {
+  @JavascriptInterface
+  fun setBackgroundModeEnabled(enabled: Boolean) {
+    onModeChanged(enabled)
   }
 }

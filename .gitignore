@@ -20,6 +20,9 @@ src-tauri/target/
 src-tauri/target_check/
 src-tauri/gen/android/**/build/
 src-tauri/gen/android/.gradle/
+src-tauri/gen/android/keystore.properties
+*.jks
+*.keystore
 
 # Local env files
 .env

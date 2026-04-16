@@ -13,6 +13,23 @@ val tauriProperties = Properties().apply {
     }
 }
 
+val signingProperties = Properties().apply {
+    val propFile = file("../keystore.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
+val signingStoreFile = signingProperties.getProperty("storeFile", "").trim()
+val signingStorePassword = signingProperties.getProperty("storePassword", "").trim()
+val signingKeyAlias = signingProperties.getProperty("keyAlias", "").trim()
+val signingKeyPassword = signingProperties.getProperty("keyPassword", "").trim()
+val hasReleaseSigning = signingStoreFile.isNotEmpty() &&
+    signingStorePassword.isNotEmpty() &&
+    signingKeyAlias.isNotEmpty() &&
+    signingKeyPassword.isNotEmpty() &&
+    file("../$signingStoreFile").exists()
+
 android {
     compileSdk = 36
     namespace = "com.iamakashtechie.clipsync"
@@ -23,6 +40,16 @@ android {
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        create("release") {
+            if (hasReleaseSigning) {
+                storeFile = file("../$signingStoreFile")
+                storePassword = signingStorePassword
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyPassword
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -37,6 +64,9 @@ android {
             }
         }
         getByName("release") {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = true
             proguardFiles(
                 *fileTree(".") { include("**/*.pro") }

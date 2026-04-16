@@ -3,6 +3,7 @@ import { useClipSyncController } from '../features/clipsync/hooks/useClipSyncCon
 import { AppFooter } from '../features/layout/AppFooter';
 import { AppHeader } from '../features/layout/AppHeader';
 import { SettingsView } from '../features/settings/SettingsView';
+import { ValidationView } from '../features/validation/ValidationView';
 
 export default function AppShell() {
   const controller = useClipSyncController();
@@ -32,10 +33,19 @@ export default function AppShell() {
             onManualSync={controller.onManualSync}
             remoteTextPreview={controller.remoteTextPreview}
             nativeBridgeStatus={controller.nativeBridgeStatus}
+            nativeBridgeStats={controller.nativeBridgeStats}
             onPickManualImage={controller.onPickManualImage}
             manualImagePreview={controller.manualImagePreview}
             onManualImageSync={controller.onManualImageSync}
             remoteImagePreview={controller.remoteImagePreview}
+          />
+        ) : controller.currentTab === 'validation' ? (
+          <ValidationView
+            cases={controller.validationCases}
+            onResultChange={controller.onValidationResultChange}
+            onNotesChange={controller.onValidationNotesChange}
+            onExport={controller.onExportValidationReport}
+            onReset={controller.onResetValidationMatrix}
           />
         ) : (
           <SettingsView

@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "rc:check": "npm run build && cd src-tauri && cargo check -q",
+    "rc:desktop": "npm run rc:check && npm run tauri build",
+    "rc:android": "npm run rc:check && npm run tauri android build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",

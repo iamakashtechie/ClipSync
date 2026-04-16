@@ -1,4 +1,4 @@
-export type AppTab = 'dashboard' | 'settings';
+export type AppTab = 'dashboard' | 'validation' | 'settings';
 
 export type SyncStatus = 'searching' | 'connected';
 
@@ -16,6 +16,29 @@ export type SyncStats = {
   received: number;
   dropped: number;
   stale_rejected: number;
+};
+
+export type NativeBridgeStats = {
+  captured_text: number;
+  captured_image: number;
+  sent_text: number;
+  sent_image: number;
+  skipped: number;
+  failed: number;
+  malformed: number;
+  last_source: string;
+  last_type: 'text' | 'image' | 'unknown';
+};
+
+export type ValidationResult = 'not-run' | 'pass' | 'fail';
+
+export type ValidationCase = {
+  id: string;
+  title: string;
+  description: string;
+  result: ValidationResult;
+  notes: string;
+  last_run_at: string;
 };
 
 export type StatusResponse = {

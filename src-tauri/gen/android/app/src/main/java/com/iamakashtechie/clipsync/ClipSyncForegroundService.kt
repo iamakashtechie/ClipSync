@@ -9,9 +9,13 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Base64
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 
 class ClipSyncForegroundService : Service(), ClipboardManager.OnPrimaryClipChangedListener {
   private var clipboardManager: ClipboardManager? = null
+  private val maxImageBytes = 2_500_000
 
   override fun onCreate() {
     super.onCreate()
@@ -47,8 +51,62 @@ class ClipSyncForegroundService : Service(), ClipboardManager.OnPrimaryClipChang
       return
     }
 
-    val text = clip.getItemAt(0).coerceToText(this)?.toString() ?: return
+    val item = clip.getItemAt(0)
+    val uri = item.uri
+    if (uri != null) {
+      val inferredMime = contentResolver.getType(uri)
+        ?: clip.description?.takeIf { it.mimeTypeCount > 0 }?.getMimeType(0)
+
+      if (inferredMime?.startsWith("image/") == true) {
+        val imageBase64 = readUriAsBase64(uri, maxImageBytes)
+        if (!imageBase64.isNullOrEmpty()) {
+          publishNativeClipboardImage(this, inferredMime, imageBase64, source)
+          return
+        }
+      }
+    }
+
+    val text = item.coerceToText(this)?.toString() ?: return
     publishNativeClipboardText(this, text, source)
+  }
+
+  private fun readUriAsBase64(uri: android.net.Uri, maxBytes: Int): String? {
+    return try {
+      contentResolver.openInputStream(uri)?.use { inputStream ->
+        val bytes = readBytesLimited(inputStream, maxBytes)
+        if (bytes.isEmpty()) {
+          null
+        } else {
+          Base64.encodeToString(bytes, Base64.NO_WRAP)
+        }
+      }
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private fun readBytesLimited(inputStream: InputStream, maxBytes: Int): ByteArray {
+    val output = ByteArrayOutputStream()
+    val buffer = ByteArray(8192)
+    var total = 0
+
+    while (true) {
+      val remaining = maxBytes - total
+      if (remaining <= 0) {
+        break
+      }
+
+      val toRead = if (buffer.size < remaining) buffer.size else remaining
+      val read = inputStream.read(buffer, 0, toRead)
+      if (read <= 0) {
+        break
+      }
+
+      output.write(buffer, 0, read)
+      total += read
+    }
+
+    return output.toByteArray()
   }
 
   private fun startForegroundInternal() {

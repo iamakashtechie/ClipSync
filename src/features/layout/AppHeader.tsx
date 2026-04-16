@@ -24,6 +24,14 @@ export function AppHeader({ currentTab, onTabChange }: AppHeaderProps) {
         </button>
         <button
           role="tab"
+          aria-selected={currentTab === 'validation'}
+          onClick={() => onTabChange('validation')}
+          className={`px-6 py-2 rounded-xl font-medium ${currentTab === 'validation' ? 'bg-gray-900 text-white' : 'text-gray-400'}`}
+        >
+          Validation
+        </button>
+        <button
+          role="tab"
           aria-selected={currentTab === 'settings'}
           onClick={() => onTabChange('settings')}
           className={`px-6 py-2 rounded-xl font-medium ${currentTab === 'settings' ? 'bg-gray-900 text-white' : 'text-gray-400'}`}
