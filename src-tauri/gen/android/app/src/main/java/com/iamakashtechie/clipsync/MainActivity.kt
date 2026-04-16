@@ -40,6 +40,19 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  private val runtimeEventReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+      if (intent?.action != CLIPSYNC_ACTION_NATIVE_RUNTIME_EVENT) {
+        return
+      }
+
+      val level = intent.getStringExtra(CLIPSYNC_EXTRA_LEVEL) ?: "INFO"
+      val message = intent.getStringExtra(CLIPSYNC_EXTRA_MESSAGE) ?: return
+      val source = intent.getStringExtra(CLIPSYNC_EXTRA_SOURCE) ?: "native"
+      dispatchRuntimeEventToWebView(level, source, message)
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
@@ -138,6 +151,12 @@ class MainActivity : TauriActivity() {
       IntentFilter(CLIPSYNC_ACTION_NATIVE_CLIPBOARD_CHANGED),
       ContextCompat.RECEIVER_NOT_EXPORTED,
     )
+    ContextCompat.registerReceiver(
+      this,
+      runtimeEventReceiver,
+      IntentFilter(CLIPSYNC_ACTION_NATIVE_RUNTIME_EVENT),
+      ContextCompat.RECEIVER_NOT_EXPORTED,
+    )
   }
 
   override fun onStop() {
@@ -145,6 +164,9 @@ class MainActivity : TauriActivity() {
     applyForegroundServicePolicy()
     runCatching {
       unregisterReceiver(clipboardReceiver)
+    }
+    runCatching {
+      unregisterReceiver(runtimeEventReceiver)
     }
     super.onStop()
   }
@@ -161,6 +183,9 @@ class MainActivity : TauriActivity() {
         payload.mimeType,
         payload.imageBase64,
       )
+    }
+    consumePendingNativeRuntimeEvent(this)?.let { runtimeEvent ->
+      dispatchRuntimeEventToWebView(runtimeEvent.level, runtimeEvent.source, runtimeEvent.message)
     }
   }
 
@@ -179,6 +204,9 @@ class MainActivity : TauriActivity() {
         payload.mimeType,
         payload.imageBase64,
       )
+    }
+    consumePendingNativeRuntimeEvent(this)?.let { runtimeEvent ->
+      dispatchRuntimeEventToWebView(runtimeEvent.level, runtimeEvent.source, runtimeEvent.message)
     }
   }
 
@@ -205,6 +233,18 @@ class MainActivity : TauriActivity() {
       }
     }
     val js = "window.dispatchEvent(new CustomEvent('clipsync-native-clipboard', { detail: $detail }));"
+    webView.evaluateJavascript(js, null)
+  }
+
+  private fun dispatchRuntimeEventToWebView(level: String, source: String, message: String) {
+    val webView = webViewRef ?: return
+    val detail = JSONObject().apply {
+      put("level", level)
+      put("source", source)
+      put("message", message)
+      put("timestampMs", System.currentTimeMillis())
+    }
+    val js = "window.dispatchEvent(new CustomEvent('clipsync-native-runtime', { detail: $detail }));"
     webView.evaluateJavascript(js, null)
   }
 }

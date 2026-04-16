@@ -6,11 +6,15 @@ import android.content.Intent
 const val CLIPSYNC_NATIVE_PREFS = "clipsync_native_bridge"
 const val CLIPSYNC_ACTION_NATIVE_CLIPBOARD_CHANGED =
   "com.iamakashtechie.clipsync.NATIVE_CLIPBOARD_CHANGED"
+const val CLIPSYNC_ACTION_NATIVE_RUNTIME_EVENT =
+  "com.iamakashtechie.clipsync.NATIVE_RUNTIME_EVENT"
 const val CLIPSYNC_EXTRA_TYPE = "type"
 const val CLIPSYNC_EXTRA_TEXT = "text"
 const val CLIPSYNC_EXTRA_MIME_TYPE = "mime_type"
 const val CLIPSYNC_EXTRA_IMAGE_BASE64 = "image_base64"
 const val CLIPSYNC_EXTRA_SOURCE = "source"
+const val CLIPSYNC_EXTRA_LEVEL = "level"
+const val CLIPSYNC_EXTRA_MESSAGE = "message"
 
 private const val NATIVE_TYPE_TEXT = "text"
 private const val NATIVE_TYPE_IMAGE = "image"
@@ -21,6 +25,10 @@ private const val KEY_PENDING_MIME_TYPE = "pending_mime_type"
 private const val KEY_PENDING_IMAGE_BASE64 = "pending_image_base64"
 private const val KEY_PENDING_SOURCE = "pending_source"
 private const val KEY_LAST_DISPATCHED_SIGNATURE = "last_dispatched_signature"
+private const val KEY_PENDING_RUNTIME_LEVEL = "pending_runtime_level"
+private const val KEY_PENDING_RUNTIME_MESSAGE = "pending_runtime_message"
+private const val KEY_PENDING_RUNTIME_SOURCE = "pending_runtime_source"
+private const val KEY_LAST_RUNTIME_SIGNATURE = "last_runtime_signature"
 
 private const val MAX_TEXT_LEN = 12000
 private const val MAX_IMAGE_BASE64_LEN = 8_000_000
@@ -30,6 +38,12 @@ data class NativeClipboardPayload(
   val text: String?,
   val mimeType: String?,
   val imageBase64: String?,
+  val source: String,
+)
+
+data class NativeRuntimeEvent(
+  val level: String,
+  val message: String,
   val source: String,
 )
 
@@ -143,4 +157,50 @@ fun consumePendingNativeClipboard(context: Context): NativeClipboardPayload? {
     imageBase64 = imageBase64,
     source = source,
   )
+}
+
+fun publishNativeRuntimeEvent(context: Context, level: String, message: String, source: String) {
+  val normalizedLevel = level.trim().uppercase().ifEmpty { "INFO" }
+  val normalizedMessage = message.trim()
+  if (normalizedMessage.isEmpty()) {
+    return
+  }
+
+  val normalizedSource = source.trim().ifEmpty { "native" }
+  val signature = "runtime:$normalizedLevel:$normalizedSource:$normalizedMessage"
+  val prefs = context.getSharedPreferences(CLIPSYNC_NATIVE_PREFS, Context.MODE_PRIVATE)
+  val last = prefs.getString(KEY_LAST_RUNTIME_SIGNATURE, "")
+  if (last == signature) {
+    return
+  }
+
+  prefs.edit()
+    .putString(KEY_LAST_RUNTIME_SIGNATURE, signature)
+    .putString(KEY_PENDING_RUNTIME_LEVEL, normalizedLevel)
+    .putString(KEY_PENDING_RUNTIME_MESSAGE, normalizedMessage)
+    .putString(KEY_PENDING_RUNTIME_SOURCE, normalizedSource)
+    .apply()
+
+  val intent = Intent(CLIPSYNC_ACTION_NATIVE_RUNTIME_EVENT).apply {
+    setPackage(context.packageName)
+    putExtra(CLIPSYNC_EXTRA_LEVEL, normalizedLevel)
+    putExtra(CLIPSYNC_EXTRA_MESSAGE, normalizedMessage)
+    putExtra(CLIPSYNC_EXTRA_SOURCE, normalizedSource)
+  }
+  context.sendBroadcast(intent)
+}
+
+fun consumePendingNativeRuntimeEvent(context: Context): NativeRuntimeEvent? {
+  val prefs = context.getSharedPreferences(CLIPSYNC_NATIVE_PREFS, Context.MODE_PRIVATE)
+  val level = prefs.getString(KEY_PENDING_RUNTIME_LEVEL, null) ?: return null
+  val message = prefs.getString(KEY_PENDING_RUNTIME_MESSAGE, null) ?: return null
+  val source = prefs.getString(KEY_PENDING_RUNTIME_SOURCE, "native") ?: "native"
+
+  prefs.edit()
+    .remove(KEY_PENDING_RUNTIME_LEVEL)
+    .remove(KEY_PENDING_RUNTIME_MESSAGE)
+    .remove(KEY_PENDING_RUNTIME_SOURCE)
+    .apply()
+
+  return NativeRuntimeEvent(level = level, message = message, source = source)
 }

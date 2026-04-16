@@ -101,6 +101,14 @@ const DEFAULT_VALIDATION_CASES: ValidationCase[] = [
     notes: '',
     last_run_at: '',
   },
+  {
+    id: 'boot_receiver_policy_diagnostics',
+    title: 'Boot receiver policy and diagnostics',
+    description: 'Boot start follows background mode policy and publishes boot runtime diagnostics to UI status logs.',
+    result: 'not-run',
+    notes: '',
+    last_run_at: '',
+  },
 ];
 
 function loadValidationCases(): ValidationCase[] {
@@ -458,6 +466,31 @@ export function useClipSyncController() {
       window.removeEventListener('clipsync-native-clipboard', onNativeClipboard as EventListener);
     };
   }, [paired, syncEnabled, maxImageSizeKb]);
+
+  useEffect(() => {
+    const onNativeRuntime = (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        level?: 'INFO' | 'SUCCESS' | 'FAILED';
+        source?: string;
+        message?: string;
+      }>;
+
+      const level = customEvent.detail?.level ?? 'INFO';
+      const source = customEvent.detail?.source ?? 'native';
+      const message = customEvent.detail?.message?.trim() ?? '';
+      if (!message) {
+        return;
+      }
+
+      setNativeBridgeStatus(`[${level}] ${source}: ${message}`);
+      uiLog(level, 'NATIVE_RUNTIME_EVENT', `${source}: ${message}`);
+    };
+
+    window.addEventListener('clipsync-native-runtime', onNativeRuntime as EventListener);
+    return () => {
+      window.removeEventListener('clipsync-native-runtime', onNativeRuntime as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     const report = async (isForeground: boolean) => {

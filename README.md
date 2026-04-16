@@ -81,11 +81,18 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Android native service scaffolding is present in generated Android module.
 - Background mode now actively gates local send when app is in background.
 - Android manifest now includes nearby-network permission declarations with API-level compatibility handling.
+- Boot receiver now follows background-mode policy and emits boot runtime diagnostics to the app UI.
 
 ## What is not implemented yet
 
 - Accessibility bridge currently forwards best-effort text events only (image/background write path still pending).
 - Some Android apps do not place copy-image content on system clipboard as shareable URI; in those cases native image capture may not trigger.
+
+## Boot auto-start behavior (Phase A3 in progress)
+
+- On `BOOT_COMPLETED`, boot receiver starts the foreground service only when `background_mode_enabled=true`.
+- On `LOCKED_BOOT_COMPLETED`, boot receiver defers service start and emits a runtime diagnostics event.
+- Boot path now publishes runtime diagnostics (`SUCCESS` / `INFO` / `FAILED`) into the app's Native Bridge status stream.
 
 ## Android permission behavior (Phase A2 in progress)
 
@@ -225,6 +232,9 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 24. Try an image above configured `max_image_size_kb`; confirm send is rejected with diagnostics/native bridge status.
 25. On Android 13/14/15 fresh install, verify first-run nearby permission prompt and notification permission prompt behavior.
 26. On Android 12 test device/emulator, verify compatibility fallback prompt for location permission.
+27. Enable `Background reliability mode`, reboot Android device, open app, and confirm Native Bridge Status includes boot success event.
+28. Disable `Background reliability mode`, reboot device, open app, and confirm Native Bridge Status reports boot skip due to policy.
+29. If locked-boot broadcast is available on device, confirm Native Bridge Status reports locked-boot defer event.
 
 ## Notes
 
@@ -239,6 +249,7 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 - Android native clipboard bridge now forwards text and URI-based image payloads to frontend/runtime.
 - Image sends are rejected when estimated payload size exceeds configured `max_image_size_kb` to prevent partial/corrupted sync attempts.
 - Dashboard now includes native bridge observability counters for failure triage and delivery debugging.
+- Boot-triggered start path now emits explicit runtime diagnostics that are shown in Native Bridge Status for field validation.
 - Validation tab stores matrix progress locally and can export a report for release checks.
 
 ## Known limitations (current RC)
