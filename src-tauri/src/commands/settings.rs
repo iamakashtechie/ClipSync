@@ -1,0 +1,98 @@
+use tauri::State;
+
+use crate::domain::models::AppSettings;
+use crate::domain::state::SharedState;
+use crate::services::logging::{format_backend_event, log_backend, push_diagnostic};
+use crate::services::settings::{effective_device_name, save_settings_to_disk};
+
+#[tauri::command]
+pub fn toggle_sync(enabled: bool, state: State<'_, SharedState>) -> Result<(), String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    if enabled && !s.paired {
+        let event = format_backend_event("FAILED", "SYNC_TOGGLE", "blocked: pairing required");
+        log_backend(&event);
+        push_diagnostic(&mut s, event);
+        return Err("Pairing required before enabling sync".to_string());
+    }
+    s.sync_enabled = enabled;
+    let event = format_backend_event(
+        "SUCCESS",
+        "SYNC_TOGGLE",
+        if enabled { "enabled" } else { "disabled" },
+    );
+    log_backend(&event);
+    push_diagnostic(&mut s, event);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_settings(state: State<'_, SharedState>) -> Result<AppSettings, String> {
+    let s = state.lock().map_err(|e| e.to_string())?;
+    Ok(s.settings.clone())
+}
+
+#[tauri::command]
+pub fn save_settings(
+    max_image_size_kb: u32,
+    pairing_code: String,
+    device_name_override: String,
+    background_mode_enabled: bool,
+    state: State<'_, SharedState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    if !pairing_code.chars().all(|c| c.is_ascii_digit()) || pairing_code.len() != 4 {
+        return Err("Pairing code must be exactly 4 digits".to_string());
+    }
+
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    s.settings = AppSettings {
+        max_image_size_kb,
+        pairing_code,
+        device_name_override,
+        background_mode_enabled,
+    };
+    let host_name = whoami::fallible::hostname().unwrap_or_else(|_| "unknown-host".to_string());
+    s.device_name = effective_device_name(&s.settings, &host_name);
+    s.transport_status.clear();
+    s.paired = false;
+    s.sync_enabled = false;
+    let result = save_settings_to_disk(&app, &s.settings);
+    match &result {
+        Ok(_) => {
+            let event = format_backend_event(
+                "SUCCESS",
+                "SAVE_SETTINGS",
+                &format!(
+                    "max_image_size_kb={} device_name={} background_mode_enabled={}",
+                    s.settings.max_image_size_kb, s.device_name, s.settings.background_mode_enabled
+                ),
+            );
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
+        }
+        Err(err) => {
+            let event = format_backend_event("FAILED", "SAVE_SETTINGS", err);
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
+        }
+    }
+    result
+}
+
+#[tauri::command]
+pub fn validate_pairing(code: String, state: State<'_, SharedState>) -> Result<bool, String> {
+    let mut s = state.lock().map_err(|e| e.to_string())?;
+    let ok = !s.settings.pairing_code.is_empty() && s.settings.pairing_code == code;
+    s.paired = ok;
+    if !ok {
+        s.sync_enabled = false;
+    }
+    let event = if ok {
+        format_backend_event("SUCCESS", "VALIDATE_PAIRING", "pairing verified")
+    } else {
+        format_backend_event("FAILED", "VALIDATE_PAIRING", "pairing mismatch")
+    };
+    log_backend(&event);
+    push_diagnostic(&mut s, event);
+    Ok(ok)
+}
