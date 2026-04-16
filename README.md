@@ -45,6 +45,11 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
   - Boot receiver scaffold added for auto-start on boot
   - Accessibility service scaffold + XML metadata added
   - Android manifest updated with required service/boot permissions and component declarations
+- Phase 8 integration progressed:
+  - Foreground service now listens to native clipboard changes and emits bridge events
+  - Accessibility service now publishes best-effort text events for background assist
+  - MainActivity now forwards native clipboard events into WebView as `clipsync-native-clipboard`
+  - React controller now consumes native events and feeds authenticated sync pipeline
 
 ## What works right now
 
@@ -65,8 +70,8 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 
 ## What is not implemented yet
 
-- Accessibility clipboard bridge logic is not wired yet (service is scaffold only).
-- Full foreground-service lifecycle integration with Rust runtime is not wired yet.
+- Accessibility bridge currently forwards best-effort text events only (image/background write path still pending).
+- Full foreground-service lifecycle policy controls (start/stop based on runtime mode) are still pending.
 
 ## Run
 
@@ -129,3 +134,4 @@ npm run tauri android dev
 - Reliability watchdog prunes stale peers and reports connection health telemetry.
 - Backend and UI logs now use consistent tags (for example: `TEXT_SENT_MANUAL`, `IMAGE_RECEIVED`, `PAYLOAD_SEND`).
 - Native Android background components are scaffolded; the next step is wiring accessibility clipboard events into sync runtime.
+- Native Android clipboard bridge now forwards text events to frontend/runtime; next step is deeper lifecycle policy + image bridge on Android.

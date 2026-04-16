@@ -31,6 +31,7 @@ export default function AppShell() {
             onManualSyncTextChange={controller.setManualSyncText}
             onManualSync={controller.onManualSync}
             remoteTextPreview={controller.remoteTextPreview}
+            nativeBridgeStatus={controller.nativeBridgeStatus}
             onPickManualImage={controller.onPickManualImage}
             manualImagePreview={controller.manualImagePreview}
             onManualImageSync={controller.onManualImageSync}

@@ -42,8 +42,10 @@ export function useClipSyncController() {
   const [manualImagePreview, setManualImagePreview] = useState('');
   const [manualImageMime, setManualImageMime] = useState('image/png');
   const [remoteImagePreview, setRemoteImagePreview] = useState('');
+  const [nativeBridgeStatus, setNativeBridgeStatus] = useState('No native bridge events yet');
 
   const lastClipboardTextRef = useRef('');
+  const lastNativeClipboardRef = useRef('');
   const previousStatusRef = useRef<SyncStatus>('searching');
   const previousDevicesRef = useRef<string[]>([]);
   const previousPairedRef = useRef(false);
@@ -114,6 +116,47 @@ export function useClipSyncController() {
 
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const onNativeClipboard = (event: Event) => {
+      const customEvent = event as CustomEvent<{ text?: string; source?: string }>;
+      const text = customEvent.detail?.text?.trim() ?? '';
+      const source = customEvent.detail?.source ?? 'native';
+
+      if (!text) {
+        return;
+      }
+
+      if (text === lastNativeClipboardRef.current) {
+        return;
+      }
+      lastNativeClipboardRef.current = text;
+      lastClipboardTextRef.current = text;
+      setNativeBridgeStatus(`Captured from ${source}: ${text.slice(0, 80)}${text.length > 80 ? '...' : ''}`);
+
+      if (!paired || !syncEnabled) {
+        setNativeBridgeStatus(`Captured from ${source} but skipped (paired=${paired}, sync=${syncEnabled})`);
+        uiLog('INFO', 'NATIVE_CLIPBOARD_SKIPPED', `source=${source} paired=${paired} sync=${syncEnabled}`);
+        return;
+      }
+
+      void (async () => {
+        try {
+          await pushLocalTextClipboard(text);
+          setNativeBridgeStatus(`Captured from ${source} and sent to peers (len=${text.length})`);
+          uiLog('SUCCESS', 'TEXT_SENT_NATIVE', `source=${source} len=${text.length}`);
+        } catch (error) {
+          setNativeBridgeStatus(`Captured from ${source} but send failed`);
+          uiLog('FAILED', 'TEXT_SENT_NATIVE', String(error));
+        }
+      })();
+    };
+
+    window.addEventListener('clipsync-native-clipboard', onNativeClipboard as EventListener);
+    return () => {
+      window.removeEventListener('clipsync-native-clipboard', onNativeClipboard as EventListener);
+    };
+  }, [paired, syncEnabled]);
 
   useEffect(() => {
     const report = async (isForeground: boolean) => {
@@ -337,6 +380,7 @@ export function useClipSyncController() {
     manualSyncText,
     setManualSyncText,
     remoteTextPreview,
+    nativeBridgeStatus,
     manualImagePreview,
     remoteImagePreview,
     onToggleSync,

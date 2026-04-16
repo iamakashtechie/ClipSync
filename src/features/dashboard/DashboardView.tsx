@@ -19,6 +19,7 @@ type DashboardViewProps = {
   onManualSyncTextChange: (value: string) => void;
   onManualSync: () => void;
   remoteTextPreview: string;
+  nativeBridgeStatus: string;
   onPickManualImage: ChangeEventHandler<HTMLInputElement>;
   manualImagePreview: string;
   onManualImageSync: () => void;
@@ -43,6 +44,7 @@ export function DashboardView({
   onManualSyncTextChange,
   onManualSync,
   remoteTextPreview,
+  nativeBridgeStatus,
   onPickManualImage,
   manualImagePreview,
   onManualImageSync,
@@ -144,6 +146,11 @@ export function DashboardView({
             <div>Auth peers: {runtimeHealth.authenticated_peer_count}</div>
             <div>Pruned peers: {runtimeHealth.stale_peers_pruned}</div>
           </div>
+        </div>
+
+        <div className="sync-stats-box">
+          <div className="text-gray-400">Native Bridge Status (Android)</div>
+          <div className="diagnostic-row">{nativeBridgeStatus}</div>
         </div>
 
         <div className="manual-sync-box">
