@@ -10,6 +10,23 @@ use crate::services::logging::{
 };
 use crate::services::security::is_private_or_loopback;
 
+fn estimate_base64_bytes(base64: &str) -> usize {
+    let trimmed = base64.trim();
+    if trimmed.is_empty() {
+        return 0;
+    }
+
+    let padding = if trimmed.ends_with("==") {
+        2
+    } else if trimmed.ends_with('=') {
+        1
+    } else {
+        0
+    };
+
+    ((trimmed.len() * 3) / 4).saturating_sub(padding)
+}
+
 #[tauri::command]
 pub fn consume_remote_text(state: State<'_, SharedState>) -> Result<Option<String>, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
@@ -133,8 +150,42 @@ pub async fn push_local_image_payload(
         return Ok(());
     }
 
+    if !mime_type.starts_with("image/") {
+        log_backend_event_with_state(
+            state.inner(),
+            "FAILED",
+            "IMAGE_SEND_LOCAL",
+            &format!("invalid mime type: {}", mime_type),
+        );
+        return Ok(());
+    }
+
     let (sender_id, pairing_code, peers, message_hash, timestamp_ms, allow_sync) = {
         let mut s = state.lock().map_err(|e| e.to_string())?;
+        let image_bytes = estimate_base64_bytes(&image_base64);
+        let max_image_bytes = (s.settings.max_image_size_kb as usize) * 1024;
+
+        if image_bytes == 0 {
+            let event = format_backend_event("FAILED", "IMAGE_SEND_LOCAL", "invalid base64 image payload");
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
+            return Ok(());
+        }
+
+        if image_bytes > max_image_bytes {
+            let event = format_backend_event(
+                "FAILED",
+                "IMAGE_SEND_LOCAL",
+                &format!(
+                    "image exceeds limit size={}B limit={}B",
+                    image_bytes, max_image_bytes
+                ),
+            );
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
+            return Ok(());
+        }
+
         let hash = compute_image_hash(&s.device_name, &mime_type, &image_base64);
         let timestamp_ms = now_ms();
 

@@ -18,6 +18,16 @@ import type { AppTab, NativeBridgeStats, SyncStatus, ValidationCase, ValidationR
 
 const VALIDATION_STORAGE_KEY = 'clipsync_validation_matrix_v1';
 
+function estimateBase64Bytes(base64: string): number {
+  const trimmed = base64.trim();
+  if (!trimmed) {
+    return 0;
+  }
+
+  const padding = trimmed.endsWith('==') ? 2 : trimmed.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((trimmed.length * 3) / 4) - padding);
+}
+
 const DEFAULT_VALIDATION_CASES: ValidationCase[] = [
   {
     id: 'discovery_wifi_hotspot',
@@ -37,8 +47,24 @@ const DEFAULT_VALIDATION_CASES: ValidationCase[] = [
   },
   {
     id: 'bidirectional_text_image',
-    title: 'Bidirectional text and image sync',
-    description: 'Text and image payloads flow both directions with counters and previews updating.',
+    title: 'Bidirectional text and manual image sync',
+    description: 'Text and manual image payloads flow both directions with counters and previews updating.',
+    result: 'not-run',
+    notes: '',
+    last_run_at: '',
+  },
+  {
+    id: 'image_uri_supported_apps',
+    title: 'URI image capture on supported apps',
+    description: 'Apps that expose clipboard image URIs are captured and synced when within configured size limit.',
+    result: 'not-run',
+    notes: '',
+    last_run_at: '',
+  },
+  {
+    id: 'image_unsupported_apps',
+    title: 'Unsupported image app fallback behavior',
+    description: 'Apps without shareable clipboard image URI do not crash sync and manual image picker path remains usable.',
     result: 'not-run',
     notes: '',
     last_run_at: '',
@@ -286,6 +312,35 @@ export function useClipSyncController() {
           return;
         }
 
+        const imageBytes = estimateBase64Bytes(imageBase64);
+        const maxBytes = maxImageSizeKb * 1024;
+        if (imageBytes <= 0) {
+          setNativeBridgeStatus(`Malformed native image event from ${source}`);
+          setNativeBridgeStats((prev) => ({
+            ...prev,
+            malformed: prev.malformed + 1,
+            failed: prev.failed + 1,
+            last_source: source,
+            last_type: 'image',
+          }));
+          uiLog('FAILED', 'NATIVE_IMAGE_INVALID', `source=${source} unable_to_estimate_size=true`);
+          return;
+        }
+
+        if (imageBytes > maxBytes) {
+          setNativeBridgeStatus(
+            `Captured image from ${source} but skipped (size ${Math.round(imageBytes / 1024)} KB > limit ${maxImageSizeKb} KB)`,
+          );
+          setNativeBridgeStats((prev) => ({
+            ...prev,
+            skipped: prev.skipped + 1,
+            last_source: source,
+            last_type: 'image',
+          }));
+          uiLog('INFO', 'NATIVE_IMAGE_SKIPPED_SIZE', `source=${source} size=${imageBytes} limit=${maxBytes}`);
+          return;
+        }
+
         setNativeBridgeStatus(`Captured image from ${source}: ${mimeType} bytes(base64)=${imageBase64.length}`);
         setNativeBridgeStats((prev) => ({
           ...prev,
@@ -394,7 +449,7 @@ export function useClipSyncController() {
     return () => {
       window.removeEventListener('clipsync-native-clipboard', onNativeClipboard as EventListener);
     };
-  }, [paired, syncEnabled]);
+  }, [paired, syncEnabled, maxImageSizeKb]);
 
   useEffect(() => {
     const report = async (isForeground: boolean) => {
@@ -558,6 +613,21 @@ export function useClipSyncController() {
       return;
     }
 
+    if (!file.type.startsWith('image/')) {
+      setSyncMessage('Selected file is not a supported image.');
+      uiLog('FAILED', 'IMAGE_PICKED', `unsupported mime=${file.type || 'unknown'}`);
+      return;
+    }
+
+    const maxBytes = maxImageSizeKb * 1024;
+    if (file.size > maxBytes) {
+      setManualImagePreview('');
+      event.target.value = '';
+      setSyncMessage(`Image is too large. Current limit is ${maxImageSizeKb} KB.`);
+      uiLog('FAILED', 'IMAGE_PICKED', `size=${file.size} exceeds_limit=${maxBytes}`);
+      return;
+    }
+
     setManualImageMime(file.type || 'image/png');
     uiLog('INFO', 'IMAGE_PICKED', `${file.type || 'image/png'} bytes=${file.size}`);
 
@@ -580,6 +650,14 @@ export function useClipSyncController() {
     if (!base64) {
       setSyncMessage('Invalid image payload.');
       uiLog('FAILED', 'IMAGE_SENT_MANUAL', 'invalid data url payload');
+      return;
+    }
+
+    const imageBytes = estimateBase64Bytes(base64);
+    const maxBytes = maxImageSizeKb * 1024;
+    if (imageBytes > maxBytes) {
+      setSyncMessage(`Image is too large to sync. Current limit is ${maxImageSizeKb} KB.`);
+      uiLog('FAILED', 'IMAGE_SENT_MANUAL', `size=${imageBytes} exceeds_limit=${maxBytes}`);
       return;
     }
 

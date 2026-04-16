@@ -73,6 +73,7 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
   - connection/ack errors when applicable
 - Text payload sync is active for authenticated peers.
 - Image payload sync is active for authenticated peers (manual image path).
+- Image sync now enforces the configured `max_image_size_kb` limit across manual and native send paths.
 - Sync counters are visible in dashboard.
 - Conflict and stale message decisions are visible via diagnostics.
 - Runtime health state is visible for lifecycle debugging.
@@ -84,6 +85,15 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 
 - Accessibility bridge currently forwards best-effort text events only (image/background write path still pending).
 - Some Android apps do not place copy-image content on system clipboard as shareable URI; in those cases native image capture may not trigger.
+
+## Image sync behavior matrix (Phase A1)
+
+| Scenario category | Source behavior | Expected ClipSync result |
+| --- | --- | --- |
+| Supported: Manual picker (all devices) | User picks image from `Manual image sync test` | Image is sent if pairing + sync are enabled and payload is within `max_image_size_kb`. |
+| Supported: Android URI clipboard image | Android app exposes copied image as shareable clipboard URI with `image/*` MIME | Foreground service reads URI, bridge forwards payload, and image is sent if within `max_image_size_kb`. |
+| Unsupported: No URI image in clipboard | Android app copies image in a private/inaccessible format or non-URI payload | Native image capture does not trigger; use manual picker fallback path. |
+| Unsupported: Oversized payload | Selected or captured image exceeds configured limit | Payload is rejected locally with diagnostics/status update; app remains stable and continues syncing other payloads. |
 
 ## Run
 
@@ -202,6 +212,9 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 19. Disable `Background reliability mode`, switch app to background, then send local text/image; confirm diagnostics show blocked local sync in background.
 20. Keep one peer offline for >30s and confirm `Pruned peers` increments.
 21. Open `Validation` tab, mark each scenario pass/fail with notes, and export JSON report.
+22. Copy image from an Android app known to expose clipboard URI and confirm native image capture path sends image.
+23. Copy image from an Android app that does not expose URI clipboard image and confirm no crash; verify manual picker fallback still works.
+24. Try an image above configured `max_image_size_kb`; confirm send is rejected with diagnostics/native bridge status.
 
 ## Notes
 
@@ -214,6 +227,7 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 - Native Android background components are now integrated with policy-controlled lifecycle behavior.
 - Foreground service is policy-controlled: when background mode is enabled and app is backgrounded, service stays active; otherwise it is stopped.
 - Android native clipboard bridge now forwards text and URI-based image payloads to frontend/runtime.
+- Image sends are rejected when estimated payload size exceeds configured `max_image_size_kb` to prevent partial/corrupted sync attempts.
 - Dashboard now includes native bridge observability counters for failure triage and delivery debugging.
 - Validation tab stores matrix progress locally and can export a report for release checks.
 
@@ -221,3 +235,83 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 
 - Accessibility path is best-effort text oriented; broad image/background write parity is incomplete.
 - Some Android apps do not expose copied images as clipboard URI, so native image capture may not trigger.
+- Native clipboard image capture depends on URI-accessible image data; apps using private clipboard containers require manual picker fallback.
+
+## Implementation Gap Closure Plan (all pending)
+
+Status legend:
+
+- [ ] Not done yet
+
+### Phase A - Close partially implemented items (4)
+
+1. [ ] Improve image sync reliability and document exact limits
+   - Scope:
+     - Keep existing manual image sync path stable.
+     - Add fallback handling notes for Android apps that do not expose image URI clipboard payloads.
+     - Define explicit supported image scenarios (manual picker, URI-based capture, unsupported app cases).
+   - Deliverables:
+     - Updated README behavior matrix for image sync.
+     - Validation test cases for supported/unsupported app categories.
+
+2. [ ] Add missing Android nearby permissions + runtime handling
+   - Scope:
+     - Add `NEARBY_WIFI_DEVICES` (and any API-gated companion permissions if required by target SDK behavior).
+     - Verify no regression for existing permissions (`POST_NOTIFICATIONS`, `FOREGROUND_SERVICE`, `RECEIVE_BOOT_COMPLETED`).
+     - Add first-run permission UX copy for user clarity.
+   - Deliverables:
+     - Updated Android manifest.
+     - Permission request flow verified on Android 13/14/15.
+
+3. [ ] Promote boot auto-start from scaffold to verified behavior
+   - Scope:
+     - Validate `ClipSyncBootReceiver` on cold boot and locked boot cases.
+     - Ensure service start behavior follows policy and Android background restrictions safely.
+     - Add diagnostics event for boot-triggered start path.
+   - Deliverables:
+     - Repeatable boot test checklist and pass evidence.
+     - Docs changed from "scaffold" wording to "verified" only after validation pass.
+
+4. [ ] Remove ambiguity from "no need to open app daily" claim
+   - Scope:
+     - Align user-facing copy with real service policy (`background_mode_enabled` + app foreground/background state).
+     - Make expected behavior explicit for both ON and OFF background reliability mode.
+   - Deliverables:
+     - README user workflow text updated with condition-based wording.
+     - In-app hint text aligned with same policy statement.
+
+### Phase B - Implement missing features (3)
+
+1. [ ] Add Android notification action to pause/resume sync
+   - Scope:
+     - Add notification action buttons and PendingIntent handling in foreground service.
+     - Wire action to app/native bridge so sync state can be toggled without opening full UI.
+     - Keep action idempotent and reflected in dashboard status.
+   - Deliverables:
+     - Notification action UX working end-to-end.
+     - Validation case proving toggle works while app is backgrounded.
+
+2. [ ] Add Windows auto-start on login
+   - Scope:
+     - Integrate Tauri auto-start plugin/config in backend and app config.
+     - Provide user setting to enable/disable start on login.
+     - Validate behavior on fresh install and after reboot.
+   - Deliverables:
+     - Auto-start capability integrated in desktop build.
+     - Settings toggle + persisted preference.
+
+3. [ ] Add Windows system tray icon and menu controls
+   - Scope:
+     - Create tray icon with menu options: Open, Sync On/Off, Quit.
+     - Show connection state via tooltip/title updates.
+     - Ensure minimize/close behavior and window restore UX are predictable.
+   - Deliverables:
+     - Tray integration wired in runtime entry path.
+     - Manual test checklist for tray flows and edge cases.
+
+### Execution order and acceptance gates
+
+1. [ ] Phase A complete with validation evidence.
+2. [ ] Phase B complete with desktop + Android sanity checks.
+3. [ ] README and release notes updated to only claim verified behaviors.
+4. [ ] RC rerun required: `npm run rc:check`, `npm run rc:desktop`, `npm run rc:android`.

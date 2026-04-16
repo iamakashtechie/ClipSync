@@ -69,20 +69,18 @@ fun publishNativeClipboardImage(context: Context, mimeType: String, imageBase64:
     return
   }
 
-  val clipped = if (normalized.length > MAX_IMAGE_BASE64_LEN) {
-    normalized.take(MAX_IMAGE_BASE64_LEN)
-  } else {
-    normalized
+  if (normalized.length > MAX_IMAGE_BASE64_LEN) {
+    return
   }
 
-  val signature = "image:$mimeType:${clipped.length}:${clipped.take(120)}"
+  val signature = "image:$mimeType:${normalized.length}:${normalized.take(120)}"
   publishNativePayload(
     context = context,
     payload = NativeClipboardPayload(
       type = NATIVE_TYPE_IMAGE,
       text = null,
       mimeType = mimeType,
-      imageBase64 = clipped,
+      imageBase64 = normalized,
       source = source,
     ),
     signature = signature,
