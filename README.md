@@ -94,6 +94,15 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - On `LOCKED_BOOT_COMPLETED`, boot receiver defers service start and emits a runtime diagnostics event.
 - Boot path now publishes runtime diagnostics (`SUCCESS` / `INFO` / `FAILED`) into the app's Native Bridge status stream.
 
+## Background reliability policy (explicit)
+
+- `background_mode_enabled = ON`:
+  - While app is backgrounded, Android foreground service remains active.
+  - This is the mode intended for "no need to reopen app each time" behavior, subject to Android battery/device restrictions.
+- `background_mode_enabled = OFF`:
+  - Foreground service is stopped when app is backgrounded.
+  - Reopen ClipSync app to resume active sync and runtime updates.
+
 ## Android permission behavior (Phase A2 in progress)
 
 - Android 13+ requests `NEARBY_WIFI_DEVICES` for nearby network discovery compatibility.
@@ -246,6 +255,7 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 - Backend and UI logs now use consistent tags (for example: `TEXT_SENT_MANUAL`, `IMAGE_RECEIVED`, `PAYLOAD_SEND`).
 - Native Android background components are now integrated with policy-controlled lifecycle behavior.
 - Foreground service is policy-controlled: when background mode is enabled and app is backgrounded, service stays active; otherwise it is stopped.
+- Daily-use expectation is policy-based: ON favors continuous background behavior; OFF expects reopening app for active sync sessions.
 - Android native clipboard bridge now forwards text and URI-based image payloads to frontend/runtime.
 - Image sends are rejected when estimated payload size exceeds configured `max_image_size_kb` to prevent partial/corrupted sync attempts.
 - Dashboard now includes native bridge observability counters for failure triage and delivery debugging.

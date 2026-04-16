@@ -73,8 +73,13 @@ export function SettingsView({
             checked={backgroundModeEnabled}
             onChange={(event) => onBackgroundModeEnabledChange(event.target.checked)}
           />
-          <span>Background reliability mode (preview)</span>
+          <span>Background reliability mode</span>
         </label>
+
+        <p className="settings-hint">
+          Policy: when ON, Android keeps the foreground service active while app is backgrounded so sync can continue.
+          When OFF, background service is stopped and you should reopen the app for active sync.
+        </p>
 
         <p className="settings-hint">
           Android first-run note: allow notification and nearby-network permission prompts to keep discovery and

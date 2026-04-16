@@ -148,6 +148,11 @@ export function DashboardView({
             <div>Auth peers: {runtimeHealth.authenticated_peer_count}</div>
             <div>Pruned peers: {runtimeHealth.stale_peers_pruned}</div>
           </div>
+          <p className="settings-hint mt-4">
+            Policy: {runtimeHealth.background_mode_enabled
+              ? 'Background mode is ON, so Android keeps foreground service behavior while app is backgrounded.'
+              : 'Background mode is OFF, so background service is stopped and app should be reopened for active sync.'}
+          </p>
         </div>
 
         <div className="sync-stats-box">
