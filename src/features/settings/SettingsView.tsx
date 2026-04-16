@@ -76,6 +76,11 @@ export function SettingsView({
           <span>Background reliability mode (preview)</span>
         </label>
 
+        <p className="settings-hint">
+          Android first-run note: allow notification and nearby-network permission prompts to keep discovery and
+          background reliability stable on Android 13+.
+        </p>
+
         <button onClick={onSaveSettings} className="settings-save-btn">
           Save Settings
         </button>

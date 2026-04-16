@@ -46,6 +46,14 @@ const DEFAULT_VALIDATION_CASES: ValidationCase[] = [
     last_run_at: '',
   },
   {
+    id: 'android_runtime_permissions',
+    title: 'Android runtime permissions',
+    description: 'First-run permissions for notifications and nearby-network access are requested and user outcome is validated.',
+    result: 'not-run',
+    notes: '',
+    last_run_at: '',
+  },
+  {
     id: 'bidirectional_text_image',
     title: 'Bidirectional text and manual image sync',
     description: 'Text and manual image payloads flow both directions with counters and previews updating.',

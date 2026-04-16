@@ -80,11 +80,19 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Console now reports function-level success/failure events even if UI state glitches.
 - Android native service scaffolding is present in generated Android module.
 - Background mode now actively gates local send when app is in background.
+- Android manifest now includes nearby-network permission declarations with API-level compatibility handling.
 
 ## What is not implemented yet
 
 - Accessibility bridge currently forwards best-effort text events only (image/background write path still pending).
 - Some Android apps do not place copy-image content on system clipboard as shareable URI; in those cases native image capture may not trigger.
+
+## Android permission behavior (Phase A2 in progress)
+
+- Android 13+ requests `NEARBY_WIFI_DEVICES` for nearby network discovery compatibility.
+- Android 12 and below requests `ACCESS_FINE_LOCATION` as compatibility fallback where older nearby behaviors require it.
+- Android 13+ requests `POST_NOTIFICATIONS` when foreground service needs notification visibility.
+- App now includes first-run UX guidance in Settings for permission prompts.
 
 ## Image sync behavior matrix (Phase A1)
 
@@ -215,6 +223,8 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 22. Copy image from an Android app known to expose clipboard URI and confirm native image capture path sends image.
 23. Copy image from an Android app that does not expose URI clipboard image and confirm no crash; verify manual picker fallback still works.
 24. Try an image above configured `max_image_size_kb`; confirm send is rejected with diagnostics/native bridge status.
+25. On Android 13/14/15 fresh install, verify first-run nearby permission prompt and notification permission prompt behavior.
+26. On Android 12 test device/emulator, verify compatibility fallback prompt for location permission.
 
 ## Notes
 

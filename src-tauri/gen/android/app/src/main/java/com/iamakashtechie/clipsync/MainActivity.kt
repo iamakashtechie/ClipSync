@@ -19,6 +19,8 @@ class MainActivity : TauriActivity() {
   private val keyBackgroundModeEnabled = "background_mode_enabled"
 
   private val notificationPermissionReqCode = 1019
+  private val nearbyPermissionReqCode = 1020
+  private val keyPermissionsPrompted = "permissions_prompted"
   private var webViewRef: WebView? = null
   private var isAppForeground = true
   private var backgroundModeEnabled = true
@@ -43,7 +45,35 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
     val prefs = getSharedPreferences(prefsName, Context.MODE_PRIVATE)
     backgroundModeEnabled = prefs.getBoolean(keyBackgroundModeEnabled, true)
+    ensureNearbyPermissions()
     applyForegroundServicePolicy()
+  }
+
+  private fun ensureNearbyPermissions() {
+    val permissionsToRequest = mutableListOf<String>()
+
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+      if (ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) != PackageManager.PERMISSION_GRANTED) {
+        permissionsToRequest.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+      }
+    } else {
+      if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
+      }
+    }
+
+    if (permissionsToRequest.isEmpty()) {
+      return
+    }
+
+    val prefs = getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+    val prompted = prefs.getBoolean(keyPermissionsPrompted, false)
+    if (prompted) {
+      return
+    }
+
+    prefs.edit().putBoolean(keyPermissionsPrompted, true).apply()
+    ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), nearbyPermissionReqCode)
   }
 
   private fun ensureForegroundServiceStarted() {
@@ -89,6 +119,11 @@ class MainActivity : TauriActivity() {
   ) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     if (requestCode == notificationPermissionReqCode) {
+      applyForegroundServicePolicy()
+      return
+    }
+
+    if (requestCode == nearbyPermissionReqCode) {
       applyForegroundServicePolicy()
     }
   }
