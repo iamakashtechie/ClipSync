@@ -11,6 +11,9 @@ type StatusResponse = {
     is_app_foreground: boolean;
     visibility_report_age_ms: number;
     background_mode_enabled: boolean;
+    last_auth_age_ms: number;
+    stale_peers_pruned: number;
+    authenticated_peer_count: number;
   };
   peer_transport?: Record<string, string>;
   sync_stats?: {
@@ -32,6 +35,8 @@ type IncomingImage = {
   mime_type: string;
   image_base64: string;
 };
+
+type UiLogLevel = 'INFO' | 'SUCCESS' | 'FAILED';
 
 function App() {
   const [currentTab, setCurrentTab] = useState<'dashboard' | 'settings'>('dashboard');
@@ -55,11 +60,35 @@ function App() {
   const [manualImageMime, setManualImageMime] = useState('image/png');
   const [remoteImagePreview, setRemoteImagePreview] = useState('');
   const lastClipboardTextRef = useRef('');
+  const previousStatusRef = useRef<'searching' | 'connected'>('searching');
+  const previousDevicesRef = useRef<string[]>([]);
+  const previousPairedRef = useRef(false);
   const [runtimeHealth, setRuntimeHealth] = useState({
     is_app_foreground: true,
     visibility_report_age_ms: 0,
     background_mode_enabled: true,
+    last_auth_age_ms: Number.MAX_SAFE_INTEGER,
+    stale_peers_pruned: 0,
+    authenticated_peer_count: 0,
   });
+
+  const uiLog = (level: UiLogLevel, event: string, details?: string) => {
+    const prefix = `[ClipSync/UI][${level}] ${event}`;
+    if (details) {
+      if (level === 'FAILED') {
+        console.error(`${prefix} :: ${details}`);
+      } else {
+        console.log(`${prefix} :: ${details}`);
+      }
+      return;
+    }
+
+    if (level === 'FAILED') {
+      console.error(prefix);
+    } else {
+      console.log(prefix);
+    }
+  };
 
   // Fetch initial status
   useEffect(() => {
@@ -74,11 +103,31 @@ function App() {
           is_app_foreground: true,
           visibility_report_age_ms: 0,
           background_mode_enabled: true,
+          last_auth_age_ms: Number.MAX_SAFE_INTEGER,
+          stale_peers_pruned: 0,
+          authenticated_peer_count: 0,
         });
         setPeerTransport(res.peer_transport ?? {});
         setSyncStats(res.sync_stats ?? { sent: 0, received: 0, dropped: 0, stale_rejected: 0 });
+
+        if (previousStatusRef.current !== res.status) {
+          uiLog('INFO', 'STATUS_CHANGED', `${previousStatusRef.current} -> ${res.status}`);
+          previousStatusRef.current = res.status;
+        }
+
+        const nextDevices = res.devices ?? [];
+        const prevDevices = previousDevicesRef.current;
+        if (nextDevices.join('|') !== prevDevices.join('|')) {
+          uiLog('INFO', 'DEVICES_UPDATED', `${prevDevices.length} -> ${nextDevices.length}`);
+          previousDevicesRef.current = nextDevices;
+        }
+
+        if (previousPairedRef.current !== res.paired) {
+          uiLog('INFO', 'PAIR_STATE_CHANGED', `${previousPairedRef.current} -> ${res.paired}`);
+          previousPairedRef.current = res.paired;
+        }
       } catch (e) {
-        console.error(e);
+        uiLog('FAILED', 'GET_STATUS', String(e));
       }
     };
 
@@ -87,7 +136,7 @@ function App() {
         const events = await invoke<string[]>('get_diagnostics');
         setDiagnostics(events.slice(-8));
       } catch (e) {
-        console.error(e);
+        uiLog('FAILED', 'GET_DIAGNOSTICS', String(e));
       }
     };
 
@@ -98,8 +147,9 @@ function App() {
         setPairingCode(settings.pairing_code);
         setDeviceNameOverride(settings.device_name_override ?? '');
         setBackgroundModeEnabled(settings.background_mode_enabled ?? true);
+        uiLog('SUCCESS', 'SETTINGS_LOADED');
       } catch (e) {
-        console.error(e);
+        uiLog('FAILED', 'GET_SETTINGS', String(e));
       }
     };
 
@@ -118,8 +168,9 @@ function App() {
     const report = async (isForeground: boolean) => {
       try {
         await invoke('report_app_visibility', { isForeground });
+        uiLog('INFO', 'REPORT_APP_VISIBILITY', isForeground ? 'foreground' : 'background');
       } catch (e) {
-        console.error(e);
+        uiLog('FAILED', 'REPORT_APP_VISIBILITY', String(e));
       }
     };
 
@@ -150,23 +201,27 @@ function App() {
         const remote = await invoke<string | null>('consume_remote_text');
         if (remote) {
           setRemoteTextPreview(remote);
+          uiLog('SUCCESS', 'TEXT_RECEIVED', `len=${remote.length}`);
           try {
             await navigator.clipboard.writeText(remote);
+            uiLog('SUCCESS', 'LOCAL_CLIPBOARD_WRITE', 'remote text applied');
           } catch {
             // Clipboard API can fail on some Android WebView contexts.
+            uiLog('FAILED', 'LOCAL_CLIPBOARD_WRITE', 'clipboard API write failed');
           }
         }
       } catch (e) {
-        console.error(e);
+        uiLog('FAILED', 'CONSUME_REMOTE_TEXT', String(e));
       }
 
       try {
         const remoteImage = await invoke<IncomingImage | null>('consume_remote_image');
         if (remoteImage && remoteImage.image_base64) {
           setRemoteImagePreview(`data:${remoteImage.mime_type};base64,${remoteImage.image_base64}`);
+          uiLog('SUCCESS', 'IMAGE_RECEIVED', `${remoteImage.mime_type} bytes(base64)=${remoteImage.image_base64.length}`);
         }
       } catch (e) {
-        console.error(e);
+        uiLog('FAILED', 'CONSUME_REMOTE_IMAGE', String(e));
       }
 
       try {
@@ -174,9 +229,11 @@ function App() {
         if (localText && localText !== lastClipboardTextRef.current) {
           lastClipboardTextRef.current = localText;
           await invoke('push_local_text_clipboard', { content: localText });
+          uiLog('SUCCESS', 'TEXT_SENT_AUTO', `len=${localText.length}`);
         }
       } catch {
         // Ignore clipboard read issues and keep manual sync path available.
+        uiLog('FAILED', 'TEXT_SENT_AUTO', 'clipboard read or push failed');
       }
     }, 1200);
 
@@ -189,8 +246,9 @@ function App() {
       await invoke('toggle_sync', { enabled: newState });
       setSyncEnabled(newState);
       setSyncMessage('');
+      uiLog('SUCCESS', 'TOGGLE_SYNC', newState ? 'enabled' : 'disabled');
     } catch (error) {
-      console.error('Failed to toggle sync:', error);
+      uiLog('FAILED', 'TOGGLE_SYNC', String(error));
       setSyncMessage(String(error));
     }
   };
@@ -198,6 +256,7 @@ function App() {
   const onSaveSettings = async () => {
     if (!/^\d{4}$/.test(pairingCode)) {
       setSaveMessage('Pairing code must be exactly 4 digits.');
+      uiLog('FAILED', 'SAVE_SETTINGS', 'invalid pairing code format');
       return;
     }
 
@@ -211,8 +270,9 @@ function App() {
       setSaveMessage('Settings saved. Device name update may require app restart for discovery name refresh.');
       setPaired(false);
       setSyncEnabled(false);
+      uiLog('SUCCESS', 'SAVE_SETTINGS', `max_image_size_kb=${maxImageSizeKb} bg_mode=${backgroundModeEnabled}`);
     } catch (error) {
-      console.error('Failed to save settings:', error);
+      uiLog('FAILED', 'SAVE_SETTINGS', String(error));
       setSaveMessage('Failed to save settings.');
     }
   };
@@ -220,6 +280,7 @@ function App() {
   const onUnlockSync = async () => {
     if (!/^\d{4}$/.test(unlockCode)) {
       setSyncMessage('Enter your 4-digit pairing code to unlock sync.');
+      uiLog('FAILED', 'VALIDATE_PAIRING', 'unlock code is not 4 digits');
       return;
     }
 
@@ -228,13 +289,15 @@ function App() {
       if (ok) {
         setPaired(true);
         setSyncMessage('Pairing verified. You can enable sync now.');
+        uiLog('SUCCESS', 'VALIDATE_PAIRING', 'pairing verified');
       } else {
         setPaired(false);
         setSyncEnabled(false);
         setSyncMessage('Invalid pairing code.');
+        uiLog('FAILED', 'VALIDATE_PAIRING', 'pairing mismatch');
       }
     } catch (error) {
-      console.error('Failed to validate pairing:', error);
+      uiLog('FAILED', 'VALIDATE_PAIRING', String(error));
       setSyncMessage('Unable to verify pairing code right now.');
     }
   };
@@ -242,13 +305,15 @@ function App() {
   const onManualSync = async () => {
     if (!manualSyncText.trim()) {
       setSyncMessage('Enter text to send.');
+      uiLog('FAILED', 'TEXT_SENT_MANUAL', 'empty payload');
       return;
     }
     try {
       await invoke('push_local_text_clipboard', { content: manualSyncText });
       setSyncMessage('Text sent to authenticated peers.');
+      uiLog('SUCCESS', 'TEXT_SENT_MANUAL', `len=${manualSyncText.length}`);
     } catch (error) {
-      console.error('Manual sync failed:', error);
+      uiLog('FAILED', 'TEXT_SENT_MANUAL', String(error));
       setSyncMessage('Manual sync failed.');
     }
   };
@@ -257,6 +322,7 @@ function App() {
     const file = event.target.files?.[0];
     if (!file) return;
     setManualImageMime(file.type || 'image/png');
+    uiLog('INFO', 'IMAGE_PICKED', `${file.type || 'image/png'} bytes=${file.size}`);
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -269,12 +335,14 @@ function App() {
   const onManualImageSync = async () => {
     if (!manualImagePreview.startsWith('data:')) {
       setSyncMessage('Pick an image first.');
+      uiLog('FAILED', 'IMAGE_SENT_MANUAL', 'image not selected');
       return;
     }
 
     const base64 = manualImagePreview.split(',')[1] ?? '';
     if (!base64) {
       setSyncMessage('Invalid image payload.');
+      uiLog('FAILED', 'IMAGE_SENT_MANUAL', 'invalid data url payload');
       return;
     }
 
@@ -284,8 +352,9 @@ function App() {
         mimeType: manualImageMime,
       });
       setSyncMessage('Image sent to authenticated peers.');
+      uiLog('SUCCESS', 'IMAGE_SENT_MANUAL', `${manualImageMime} bytes(base64)=${base64.length}`);
     } catch (error) {
-      console.error('Manual image sync failed:', error);
+      uiLog('FAILED', 'IMAGE_SENT_MANUAL', String(error));
       setSyncMessage('Manual image sync failed.');
     }
   };
@@ -393,6 +462,13 @@ function App() {
                   <div>App: {runtimeHealth.is_app_foreground ? 'Foreground' : 'Background'}</div>
                   <div>Report age: {Math.round(runtimeHealth.visibility_report_age_ms / 1000)}s</div>
                   <div>Bg mode: {runtimeHealth.background_mode_enabled ? 'Enabled' : 'Disabled'}</div>
+                  <div>
+                    Last auth: {runtimeHealth.last_auth_age_ms === Number.MAX_SAFE_INTEGER
+                      ? 'n/a'
+                      : `${Math.round(runtimeHealth.last_auth_age_ms / 1000)}s ago`}
+                  </div>
+                  <div>Auth peers: {runtimeHealth.authenticated_peer_count}</div>
+                  <div>Pruned peers: {runtimeHealth.stale_peers_pruned}</div>
                 </div>
               </div>
 

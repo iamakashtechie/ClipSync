@@ -46,6 +46,7 @@ struct AppState {
     sync_enabled: bool,
     paired: bool,
     discovered: HashMap<String, String>,
+    discovered_last_seen_ms: HashMap<String, u64>,
     transport_status: HashMap<String, String>,
     settings: AppSettings,
     device_name: String,
@@ -61,6 +62,8 @@ struct AppState {
     diagnostic_events: VecDeque<String>,
     is_app_foreground: bool,
     last_visibility_report_ms: u64,
+    last_auth_success_ms: u64,
+    stale_peers_pruned: u64,
 }
 
 impl Default for AppState {
@@ -69,6 +72,7 @@ impl Default for AppState {
             sync_enabled: true,
             paired: false,
             discovered: HashMap::new(),
+            discovered_last_seen_ms: HashMap::new(),
             transport_status: HashMap::new(),
             settings: AppSettings::default(),
             device_name: "".to_string(),
@@ -84,6 +88,8 @@ impl Default for AppState {
             diagnostic_events: VecDeque::new(),
             is_app_foreground: true,
             last_visibility_report_ms: 0,
+            last_auth_success_ms: 0,
+            stale_peers_pruned: 0,
         }
     }
 }
@@ -138,7 +144,8 @@ struct UdpDiscoveryBeacon {
 
 fn upsert_discovered_device(state: &SharedState, device_name: String, addr: String) {
     if let Ok(mut s) = state.lock() {
-        s.discovered.insert(device_name, addr);
+        s.discovered.insert(device_name.clone(), addr);
+        s.discovered_last_seen_ms.insert(device_name, now_ms());
     }
 }
 
@@ -187,6 +194,26 @@ fn now_ms() -> u64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn log_backend(message: &str) {
+    println!("[ClipSync/Backend][{}] {}", now_ms(), message);
+}
+
+fn format_backend_event(level: &str, event: &str, details: &str) -> String {
+    format!("[{}] {} :: {}", level, event, details)
+}
+
+fn log_backend_event(level: &str, event: &str, details: &str) {
+    log_backend(&format_backend_event(level, event, details));
+}
+
+fn log_backend_event_with_state(state: &SharedState, level: &str, event: &str, details: &str) {
+    let message = format_backend_event(level, event, details);
+    log_backend(&message);
+    if let Ok(mut s) = state.lock() {
+        push_diagnostic(&mut s, message);
+    }
 }
 
 fn push_diagnostic(state: &mut AppState, event: String) {
@@ -306,6 +333,11 @@ async fn handle_incoming_transport_connection(
     };
 
     let Ok(mut ws_stream) = accept_async(stream).await else {
+        log_backend_event(
+            "FAILED",
+            "INBOUND_TRANSPORT_ACCEPT",
+            &format!("peer={} accept websocket failed", peer_addr),
+        );
         return;
     };
 
@@ -313,12 +345,22 @@ async fn handle_incoming_transport_connection(
     let incoming = match next_msg {
         Ok(Some(Ok(msg))) => msg,
         _ => {
+            log_backend_event(
+                "FAILED",
+                "INBOUND_HELLO",
+                &format!("peer={} timeout or invalid first frame", peer_addr),
+            );
             let _ = ws_stream.close(None).await;
             return;
         }
     };
 
     let Message::Text(payload) = incoming else {
+        log_backend_event(
+            "FAILED",
+            "INBOUND_HELLO",
+            &format!("peer={} first frame not text", peer_addr),
+        );
         let _ = ws_stream.close(None).await;
         return;
     };
@@ -340,6 +382,11 @@ async fn handle_incoming_transport_connection(
             )
         }
         _ => {
+            log_backend_event(
+                "FAILED",
+                "INBOUND_HELLO_PARSE",
+                &format!("peer={} invalid hello payload", peer_addr),
+            );
             let _ = ws_stream.close(None).await;
             return;
         }
@@ -363,6 +410,12 @@ async fn handle_incoming_transport_connection(
 
     let peer_label = format!("{} ({})", remote_name, peer_addr.ip());
     if accepted {
+        log_backend_event_with_state(
+            &state,
+            "SUCCESS",
+            "PAIRING_AUTH_INBOUND",
+            &format!("peer={} authenticated", peer_label),
+        );
         set_transport_status(&state, peer_label, "authenticated (inbound)".to_string());
 
         let maybe_sync = tokio::time::timeout(Duration::from_secs(2), ws_stream.next()).await;
@@ -377,15 +430,33 @@ async fn handle_incoming_transport_connection(
                 if let Ok(mut s) = state.lock() {
                     if s.recent_hashes.contains(&message_hash) {
                         s.sync_dropped_count += 1;
-                        push_diagnostic(&mut s, format!("dropped duplicate text hash={} from {}", message_hash, sender_id));
+                        let event = format_backend_event(
+                            "FAILED",
+                            "TEXT_RECEIVED",
+                            &format!("duplicate hash={} sender={}", message_hash, sender_id),
+                        );
+                        log_backend(&event);
+                        push_diagnostic(&mut s, event);
                     } else if !should_accept_incoming(&mut s, &sender_id, timestamp_ms) {
                         s.sync_rejected_stale_count += 1;
-                        push_diagnostic(&mut s, format!("rejected stale text from {} at {}", sender_id, timestamp_ms));
+                        let event = format_backend_event(
+                            "FAILED",
+                            "TEXT_RECEIVED",
+                            &format!("stale sender={} timestamp={}", sender_id, timestamp_ms),
+                        );
+                        log_backend(&event);
+                        push_diagnostic(&mut s, event);
                     } else {
                         remember_hash(&mut s, message_hash);
                         s.pending_remote_text = Some(text);
                         s.sync_received_count += 1;
-                        push_diagnostic(&mut s, format!("accepted text from {} at {}", sender_id, timestamp_ms));
+                        let event = format_backend_event(
+                            "SUCCESS",
+                            "TEXT_RECEIVED",
+                            &format!("sender={} timestamp={}", sender_id, timestamp_ms),
+                        );
+                        log_backend(&event);
+                        push_diagnostic(&mut s, event);
                     }
                     s.transport_status.insert(
                         format!("{} ({})", sender_id, peer_addr.ip()),
@@ -405,10 +476,22 @@ async fn handle_incoming_transport_connection(
                 if let Ok(mut s) = state.lock() {
                     if s.recent_hashes.contains(&message_hash) {
                         s.sync_dropped_count += 1;
-                        push_diagnostic(&mut s, format!("dropped duplicate image hash={} from {}", message_hash, sender_id));
+                        let event = format_backend_event(
+                            "FAILED",
+                            "IMAGE_RECEIVED",
+                            &format!("duplicate hash={} sender={}", message_hash, sender_id),
+                        );
+                        log_backend(&event);
+                        push_diagnostic(&mut s, event);
                     } else if !should_accept_incoming(&mut s, &sender_id, timestamp_ms) {
                         s.sync_rejected_stale_count += 1;
-                        push_diagnostic(&mut s, format!("rejected stale image from {} at {}", sender_id, timestamp_ms));
+                        let event = format_backend_event(
+                            "FAILED",
+                            "IMAGE_RECEIVED",
+                            &format!("stale sender={} timestamp={}", sender_id, timestamp_ms),
+                        );
+                        log_backend(&event);
+                        push_diagnostic(&mut s, event);
                     } else {
                         remember_hash(&mut s, message_hash);
                         s.pending_remote_image = Some(IncomingImage {
@@ -416,7 +499,13 @@ async fn handle_incoming_transport_connection(
                             image_base64,
                         });
                         s.sync_received_count += 1;
-                        push_diagnostic(&mut s, format!("accepted image from {} at {}", sender_id, timestamp_ms));
+                        let event = format_backend_event(
+                            "SUCCESS",
+                            "IMAGE_RECEIVED",
+                            &format!("sender={} timestamp={}", sender_id, timestamp_ms),
+                        );
+                        log_backend(&event);
+                        push_diagnostic(&mut s, event);
                     }
                     s.transport_status.insert(
                         format!("{} ({})", sender_id, peer_addr.ip()),
@@ -424,8 +513,22 @@ async fn handle_incoming_transport_connection(
                     );
                 }
             }
+            if serde_json::from_str::<TransportMessage>(&payload).is_err() {
+                log_backend_event_with_state(
+                    &state,
+                    "FAILED",
+                    "INBOUND_SYNC_PARSE",
+                    &format!("peer={} payload parse failed", peer_addr),
+                );
+            }
         }
     } else {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "PAIRING_AUTH_INBOUND",
+            &format!("peer={} pairing mismatch", peer_label),
+        );
         set_transport_status(&state, peer_label, "rejected: pairing mismatch".to_string());
     }
 
@@ -461,6 +564,12 @@ async fn attempt_outbound_handshake(peer_name: String, addr: String, state: Shar
     };
 
     if local_name.is_empty() || local_code.is_empty() {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "HANDSHAKE_OUTBOUND",
+            &format!("peer={} blocked: pairing config missing", peer_name),
+        );
         set_transport_status(
             &state,
             peer_name,
@@ -472,6 +581,12 @@ async fn attempt_outbound_handshake(peer_name: String, addr: String, state: Shar
     let ws_url = format!("ws://{addr}");
     let connect_result = tokio::time::timeout(Duration::from_secs(3), connect_async(ws_url)).await;
     let Ok(Ok((mut ws_stream, _))) = connect_result else {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "HANDSHAKE_OUTBOUND",
+            &format!("peer={} connect failed", peer_name),
+        );
         set_transport_status(&state, peer_name, "connect failed".to_string());
         return;
     };
@@ -481,12 +596,24 @@ async fn attempt_outbound_handshake(peer_name: String, addr: String, state: Shar
         pairing_code: local_code,
     };
     let Ok(hello_text) = serde_json::to_string(&hello) else {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "HANDSHAKE_OUTBOUND",
+            &format!("peer={} local hello serialization failed", peer_name),
+        );
         set_transport_status(&state, peer_name, "local serialization failed".to_string());
         let _ = ws_stream.close(None).await;
         return;
     };
 
     if ws_stream.send(Message::Text(hello_text.into())).await.is_err() {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "HANDSHAKE_OUTBOUND",
+            &format!("peer={} send hello failed", peer_name),
+        );
         set_transport_status(&state, peer_name, "send hello failed".to_string());
         let _ = ws_stream.close(None).await;
         return;
@@ -494,6 +621,12 @@ async fn attempt_outbound_handshake(peer_name: String, addr: String, state: Shar
 
     let ack_msg = tokio::time::timeout(Duration::from_secs(4), ws_stream.next()).await;
     let Ok(Some(Ok(Message::Text(payload)))) = ack_msg else {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "HANDSHAKE_OUTBOUND",
+            &format!("peer={} ack timeout", peer_name),
+        );
         set_transport_status(&state, peer_name, "ack timeout".to_string());
         let _ = ws_stream.close(None).await;
         return;
@@ -506,16 +639,37 @@ async fn attempt_outbound_handshake(peer_name: String, addr: String, state: Shar
             reason,
         }) => {
             if accepted {
+                log_backend_event_with_state(
+                    &state,
+                    "SUCCESS",
+                    "HANDSHAKE_OUTBOUND",
+                    &format!("peer={} authenticated with {}", peer_name, device_name),
+                );
                 set_transport_status(
                     &state,
                     peer_name,
                     format!("authenticated with {device_name}"),
                 );
+                if let Ok(mut s) = state.lock() {
+                    s.last_auth_success_ms = now_ms();
+                }
             } else {
+                log_backend_event_with_state(
+                    &state,
+                    "FAILED",
+                    "HANDSHAKE_OUTBOUND",
+                    &format!("peer={} rejected: {}", peer_name, reason),
+                );
                 set_transport_status(&state, peer_name, format!("rejected: {reason}"));
             }
         }
         _ => {
+            log_backend_event_with_state(
+                &state,
+                "FAILED",
+                "HANDSHAKE_OUTBOUND",
+                &format!("peer={} invalid ack payload", peer_name),
+            );
             set_transport_status(&state, peer_name, "invalid ack".to_string());
         }
     }
@@ -534,6 +688,12 @@ async fn send_transport_payload_to_peer(
     let ws_url = format!("ws://{addr}");
     let connect_result = tokio::time::timeout(Duration::from_secs(3), connect_async(ws_url)).await;
     let Ok(Ok((mut ws_stream, _))) = connect_result else {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "PAYLOAD_SEND",
+            &format!("peer={} connect failed", peer_name),
+        );
         set_transport_status(&state, peer_name, "connect failed".to_string());
         return;
     };
@@ -543,10 +703,22 @@ async fn send_transport_payload_to_peer(
         pairing_code,
     };
     let Ok(hello_text) = serde_json::to_string(&hello) else {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "PAYLOAD_SEND",
+            &format!("peer={} hello serialization failed", peer_name),
+        );
         let _ = ws_stream.close(None).await;
         return;
     };
     if ws_stream.send(Message::Text(hello_text.into())).await.is_err() {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "PAYLOAD_SEND",
+            &format!("peer={} send hello failed", peer_name),
+        );
         set_transport_status(&state, peer_name, "send hello failed".to_string());
         let _ = ws_stream.close(None).await;
         return;
@@ -554,6 +726,12 @@ async fn send_transport_payload_to_peer(
 
     let ack_msg = tokio::time::timeout(Duration::from_secs(4), ws_stream.next()).await;
     let Ok(Some(Ok(Message::Text(ack_payload)))) = ack_msg else {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "PAYLOAD_SEND",
+            &format!("peer={} ack timeout", peer_name),
+        );
         set_transport_status(&state, peer_name, "ack timeout".to_string());
         let _ = ws_stream.close(None).await;
         return;
@@ -565,6 +743,12 @@ async fn send_transport_payload_to_peer(
     );
 
     if !accepted {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "PAYLOAD_SEND",
+            &format!("peer={} rejected: pairing mismatch", peer_name),
+        );
         set_transport_status(&state, peer_name, "rejected: pairing mismatch".to_string());
         let _ = ws_stream.close(None).await;
         return;
@@ -577,6 +761,12 @@ async fn send_transport_payload_to_peer(
     };
 
     let Ok(sync_text) = serde_json::to_string(&transport_payload) else {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "PAYLOAD_SEND",
+            &format!("peer={} {} payload serialization failed", peer_name, payload_label),
+        );
         let _ = ws_stream.close(None).await;
         return;
     };
@@ -590,9 +780,22 @@ async fn send_transport_payload_to_peer(
         );
         if let Ok(mut s) = state.lock() {
             s.sync_sent_count += 1;
-            push_diagnostic(&mut s, format!("sent {payload_label} to {}", peer_for_diag));
+            s.last_auth_success_ms = now_ms();
+            let event = format_backend_event(
+                "SUCCESS",
+                "PAYLOAD_SEND",
+                &format!("peer={} payload={}", peer_for_diag, payload_label),
+            );
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
         }
     } else {
+        log_backend_event_with_state(
+            &state,
+            "FAILED",
+            "PAYLOAD_SEND",
+            &format!("peer={} authenticated but {} send failed", peer_name, payload_label),
+        );
         set_transport_status(&state, peer_name, "authenticated but send failed".to_string());
     }
 
@@ -602,6 +805,36 @@ async fn send_transport_payload_to_peer(
 fn start_transport_handshake_loop(state: SharedState) {
     tauri::async_runtime::spawn(async move {
         loop {
+            if let Ok(mut s) = state.lock() {
+                let now = now_ms();
+                let ttl_ms = 30_000_u64;
+                let stale_names: Vec<String> = s
+                    .discovered_last_seen_ms
+                    .iter()
+                    .filter_map(|(name, seen)| {
+                        if now.saturating_sub(*seen) > ttl_ms {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                for name in stale_names {
+                    s.discovered.remove(&name);
+                    s.discovered_last_seen_ms.remove(&name);
+                    s.transport_status.remove(&name);
+                    s.stale_peers_pruned += 1;
+                    let event = format_backend_event(
+                        "INFO",
+                        "PEER_PRUNED",
+                        &format!("peer={}", name),
+                    );
+                    log_backend(&event);
+                    push_diagnostic(&mut s, event);
+                }
+            }
+
             let peers = {
                 let Ok(s) = state.lock() else {
                     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -714,6 +947,16 @@ fn get_status(state: State<'_, SharedState>) -> Result<serde_json::Value, String
     let devices: Vec<String> = state.discovered.keys().cloned().collect();
     let peer_transport = state.transport_status.clone();
     let visibility_age_ms = now_ms().saturating_sub(state.last_visibility_report_ms);
+    let auth_age_ms = if state.last_auth_success_ms == 0 {
+        u64::MAX
+    } else {
+        now_ms().saturating_sub(state.last_auth_success_ms)
+    };
+    let authenticated_peer_count = state
+        .transport_status
+        .values()
+        .filter(|status| status.contains("authenticated"))
+        .count();
     Ok(serde_json::json!({
         "status": if !devices.is_empty() { "connected" } else { "searching" },
         "sync_enabled": state.sync_enabled,
@@ -723,7 +966,10 @@ fn get_status(state: State<'_, SharedState>) -> Result<serde_json::Value, String
         "runtime": {
             "is_app_foreground": state.is_app_foreground,
             "visibility_report_age_ms": visibility_age_ms,
-            "background_mode_enabled": state.settings.background_mode_enabled
+            "background_mode_enabled": state.settings.background_mode_enabled,
+            "last_auth_age_ms": auth_age_ms,
+            "stale_peers_pruned": state.stale_peers_pruned,
+            "authenticated_peer_count": authenticated_peer_count
         },
         "sync_stats": {
             "sent": state.sync_sent_count,
@@ -739,13 +985,17 @@ fn report_app_visibility(is_foreground: bool, state: State<'_, SharedState>) -> 
     let mut s = state.lock().map_err(|e| e.to_string())?;
     s.is_app_foreground = is_foreground;
     s.last_visibility_report_ms = now_ms();
-    push_diagnostic(
-        &mut s,
-        format!(
-            "app visibility: {}",
-            if is_foreground { "foreground" } else { "background" }
-        ),
+    let event = format_backend_event(
+        "INFO",
+        "APP_VISIBILITY",
+        if is_foreground {
+            "foreground"
+        } else {
+            "background"
+        },
     );
+    log_backend(&event);
+    push_diagnostic(&mut s, event);
     Ok(())
 }
 
@@ -758,18 +1008,35 @@ fn get_diagnostics(state: State<'_, SharedState>) -> Result<Vec<String>, String>
 #[tauri::command]
 fn consume_remote_text(state: State<'_, SharedState>) -> Result<Option<String>, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
-    Ok(s.pending_remote_text.take())
+    let consumed = s.pending_remote_text.take();
+    if let Some(text) = &consumed {
+        let event = format_backend_event("SUCCESS", "TEXT_CONSUMED", &format!("len={}", text.len()));
+        log_backend(&event);
+        push_diagnostic(&mut s, event);
+    }
+    Ok(consumed)
 }
 
 #[tauri::command]
 fn consume_remote_image(state: State<'_, SharedState>) -> Result<Option<IncomingImage>, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
-    Ok(s.pending_remote_image.take())
+    let consumed = s.pending_remote_image.take();
+    if let Some(image) = &consumed {
+        let event = format_backend_event(
+            "SUCCESS",
+            "IMAGE_CONSUMED",
+            &format!("mime_type={} bytes(base64)={}", image.mime_type, image.image_base64.len()),
+        );
+        log_backend(&event);
+        push_diagnostic(&mut s, event);
+    }
+    Ok(consumed)
 }
 
 #[tauri::command]
 async fn push_local_text_clipboard(content: String, state: State<'_, SharedState>) -> Result<(), String> {
     if content.trim().is_empty() {
+        log_backend_event_with_state(state.inner(), "FAILED", "TEXT_SEND_LOCAL", "empty payload");
         return Ok(());
     }
 
@@ -780,6 +1047,9 @@ async fn push_local_text_clipboard(content: String, state: State<'_, SharedState
 
         if s.recent_hashes.contains(&hash) {
             s.sync_dropped_count += 1;
+            let event = format_backend_event("FAILED", "TEXT_SEND_LOCAL", "duplicate local hash dropped");
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
             return Ok(());
         }
 
@@ -797,13 +1067,31 @@ async fn push_local_text_clipboard(content: String, state: State<'_, SharedState
             discovered,
             hash,
             timestamp_ms,
-            s.sync_enabled && s.paired,
+            s.sync_enabled
+                && s.paired
+                && (s.is_app_foreground || s.settings.background_mode_enabled),
         )
     };
 
     if !allow_sync {
+        if let Ok(mut s) = state.lock() {
+            let event = format_backend_event(
+                "FAILED",
+                "TEXT_SEND_LOCAL",
+                "blocked: app background and background mode disabled",
+            );
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
+        }
         return Ok(());
     }
+
+    log_backend_event_with_state(
+        state.inner(),
+        "INFO",
+        "TEXT_SEND_LOCAL",
+        &format!("dispatching to {} peer(s)", peers.len()),
+    );
 
     for (peer_name, addr) in peers {
         let host = addr.split(':').next().unwrap_or_default();
@@ -842,6 +1130,7 @@ async fn push_local_image_payload(
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
     if image_base64.trim().is_empty() || mime_type.trim().is_empty() {
+        log_backend_event_with_state(state.inner(), "FAILED", "IMAGE_SEND_LOCAL", "empty image payload or mime type");
         return Ok(());
     }
 
@@ -852,6 +1141,9 @@ async fn push_local_image_payload(
 
         if s.recent_hashes.contains(&hash) {
             s.sync_dropped_count += 1;
+            let event = format_backend_event("FAILED", "IMAGE_SEND_LOCAL", "duplicate local hash dropped");
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
             return Ok(());
         }
 
@@ -869,13 +1161,31 @@ async fn push_local_image_payload(
             discovered,
             hash,
             timestamp_ms,
-            s.sync_enabled && s.paired,
+            s.sync_enabled
+                && s.paired
+                && (s.is_app_foreground || s.settings.background_mode_enabled),
         )
     };
 
     if !allow_sync {
+        if let Ok(mut s) = state.lock() {
+            let event = format_backend_event(
+                "FAILED",
+                "IMAGE_SEND_LOCAL",
+                "blocked: app background and background mode disabled",
+            );
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
+        }
         return Ok(());
     }
+
+    log_backend_event_with_state(
+        state.inner(),
+        "INFO",
+        "IMAGE_SEND_LOCAL",
+        &format!("dispatching to {} peer(s)", peers.len()),
+    );
 
     for (peer_name, addr) in peers {
         let host = addr.split(':').next().unwrap_or_default();
@@ -912,10 +1222,19 @@ async fn push_local_image_payload(
 fn toggle_sync(enabled: bool, state: State<'_, SharedState>) -> Result<(), String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     if enabled && !s.paired {
+        let event = format_backend_event("FAILED", "SYNC_TOGGLE", "blocked: pairing required");
+        log_backend(&event);
+        push_diagnostic(&mut s, event);
         return Err("Pairing required before enabling sync".to_string());
     }
     s.sync_enabled = enabled;
-    println!("Sync turned {}", if enabled { "ON" } else { "OFF" });
+    let event = format_backend_event(
+        "SUCCESS",
+        "SYNC_TOGGLE",
+        if enabled { "enabled" } else { "disabled" },
+    );
+    log_backend(&event);
+    push_diagnostic(&mut s, event);
     Ok(())
 }
 
@@ -950,7 +1269,27 @@ fn save_settings(
     s.transport_status.clear();
     s.paired = false;
     s.sync_enabled = false;
-    save_settings_to_disk(&app, &s.settings)
+    let result = save_settings_to_disk(&app, &s.settings);
+    match &result {
+        Ok(_) => {
+            let event = format_backend_event(
+                "SUCCESS",
+                "SAVE_SETTINGS",
+                &format!(
+                    "max_image_size_kb={} device_name={} background_mode_enabled={}",
+                    s.settings.max_image_size_kb, s.device_name, s.settings.background_mode_enabled
+                ),
+            );
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
+        }
+        Err(err) => {
+            let event = format_backend_event("FAILED", "SAVE_SETTINGS", err);
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
+        }
+    }
+    result
 }
 
 #[tauri::command]
@@ -961,6 +1300,13 @@ fn validate_pairing(code: String, state: State<'_, SharedState>) -> Result<bool,
     if !ok {
         s.sync_enabled = false;
     }
+    let event = if ok {
+        format_backend_event("SUCCESS", "VALIDATE_PAIRING", "pairing verified")
+    } else {
+        format_backend_event("FAILED", "VALIDATE_PAIRING", "pairing mismatch")
+    };
+    log_backend(&event);
+    push_diagnostic(&mut s, event);
     Ok(ok)
 }
 
@@ -995,6 +1341,13 @@ pub fn run() {
             s.settings = settings;
             s.device_name = device_name.clone();
             s.last_visibility_report_ms = now_ms();
+            let startup_event = format_backend_event(
+                "INFO",
+                "APP_STARTUP",
+                &format!("device_name={} ws_port={}", s.device_name, CLIPSYNC_WS_PORT),
+            );
+            log_backend(&startup_event);
+            push_diagnostic(&mut s, startup_event);
             drop(s);
 
             let state_clone: SharedState = app.state::<SharedState>().inner().clone();
@@ -1005,7 +1358,7 @@ pub fn run() {
             start_transport_server(transport_state.clone());
             start_transport_handshake_loop(transport_state);
 
-            println!("ClipSync v0.1 started");
+            log_backend_event("SUCCESS", "APP_STARTUP", "ClipSync v0.1 started");
             Ok(())
         })
         .run(tauri::generate_context!())

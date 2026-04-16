@@ -30,10 +30,16 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
   - Stale message rejection tracking (`stale_rejected`)
   - Runtime diagnostics event buffer exposed to UI
   - Dashboard diagnostics panel for quick field debugging
+  - Structured SUCCESS/FAILED/INFO logs for text/image send/receive paths
+  - UI console logging for pairing, sync toggles, settings save, and visibility events
 - Phase 6 groundwork started (background reliability):
   - Optional background reliability mode toggle in Settings
   - App foreground/background visibility reporting to backend runtime
   - Runtime health panel in dashboard (foreground state + report age)
+- Phase 6 reliability integration expanded:
+  - Background mode policy now affects local sync send behavior
+  - Stale peer pruning watchdog added (discovery TTL)
+  - Runtime metrics extended: authenticated peers, last auth age, stale peers pruned
 - Phase 7 Android native scaffold started:
   - Android foreground service class scaffolded and started from MainActivity
   - Boot receiver scaffold added for auto-start on boot
@@ -53,7 +59,9 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Sync counters are visible in dashboard.
 - Conflict and stale message decisions are visible via diagnostics.
 - Runtime health state is visible for lifecycle debugging.
+- Console now reports function-level success/failure events even if UI state glitches.
 - Android native service scaffolding is present in generated Android module.
+- Background mode now actively gates local send when app is in background.
 
 ## What is not implemented yet
 
@@ -109,6 +117,8 @@ npm run tauri android dev
 16. Launch Android app and confirm persistent foreground notification appears for ClipSync.
 17. Reboot device (optional) and verify service scaffold auto-start behavior.
 18. Open Android Accessibility settings and confirm ClipSync service entry exists.
+19. Disable `Background reliability mode`, switch app to background, then send local text/image; confirm diagnostics show blocked local sync in background.
+20. Keep one peer offline for >30s and confirm `Pruned peers` increments.
 
 ## Notes
 
@@ -116,4 +126,6 @@ npm run tauri android dev
 - Transport handshake is now active and should show status like `authenticated` or `rejected: pairing mismatch` per peer.
 - Text and image sync use authenticated transport and loop-prevention hashing.
 - Conflict resolution now prefers newer timestamp; tie uses sender id ordering for deterministic behavior.
+- Reliability watchdog prunes stale peers and reports connection health telemetry.
+- Backend and UI logs now use consistent tags (for example: `TEXT_SENT_MANUAL`, `IMAGE_RECEIVED`, `PAYLOAD_SEND`).
 - Native Android background components are scaffolded; the next step is wiring accessibility clipboard events into sync runtime.
