@@ -22,5 +22,5 @@ tokio = { version = "1.48.0", features = ["rt-multi-thread", "macros", "net", "t
 tokio-tungstenite = "0.28.0"
 futures-util = "0.3.31"
 
-[target.'cfg(target_os = "windows")'.dependencies]
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2"

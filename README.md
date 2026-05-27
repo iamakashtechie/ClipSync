@@ -1,6 +1,6 @@
 # ClipSync
 
-Local clipboard sync between Windows and Android using Tauri + Rust + React.
+Local clipboard sync between Windows, Linux (Ubuntu), and Android using Tauri + Rust + React.
 
 ## Current implementation status
 
@@ -83,8 +83,8 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Android manifest now includes nearby-network permission declarations with API-level compatibility handling.
 - Boot receiver now follows background-mode policy and emits boot runtime diagnostics to the app UI.
 - Android foreground notification now includes `Pause Sync` / `Resume Sync` action with runtime status propagation.
-- Windows settings now include `Start ClipSync on Windows login` with persisted autostart behavior.
-- Windows tray icon now provides `Open`, `Sync On/Off`, and `Quit` controls with connection-aware tooltip updates.
+- Desktop settings now include `Start ClipSync on login` with persisted autostart behavior (Windows/Linux).
+- Desktop tray icon now provides `Open`, `Sync On/Off`, and `Quit` controls with connection-aware tooltip updates (Windows/Linux).
 
 ## What is not implemented yet
 
@@ -97,17 +97,17 @@ Local clipboard sync between Windows and Android using Tauri + Rust + React.
 - Action is idempotent: pressing pause while already paused (or resume while active) keeps state stable and logs an info event.
 - Action writes native sync state immediately and emits runtime event so dashboard/native status can reflect the toggle.
 
-## Windows autostart behavior (Phase B2 in progress)
+## Desktop autostart behavior (Windows/Linux) (Phase B2 in progress)
 
-- Settings now include `Start ClipSync on Windows login`.
-- Save applies autostart immediately on Windows and persists choice in app settings.
+- Settings now include `Start ClipSync on login` for desktop.
+- Save applies autostart immediately on Windows/Linux and persists choice in app settings.
 - App startup also reconciles autostart state to match saved setting.
 
-## Windows tray behavior (Phase B3 in progress)
+## Desktop tray behavior (Windows/Linux) (Phase B3 in progress)
 
 - Tray menu includes: `Open`, `Sync On/Off`, and `Quit`.
 - Tray tooltip is refreshed with runtime connection state (`Sync`, discovered peer count, authenticated peer count).
-- Closing main window hides app to tray on Windows; `Open` restores and focuses the main window.
+- Closing main window hides app to tray on Windows/Linux; `Open` restores and focuses the main window.
 
 ## Boot auto-start behavior (Phase A3 in progress)
 
@@ -268,9 +268,9 @@ adb install -r "src-tauri\gen\android\app\build\outputs\apk\arm64\debug\app-arm6
 30. With background mode ON, press `Pause Sync` in Android notification and confirm notification text switches to paused state.
 31. While paused, copy text/image and confirm no new native clipboard send events are emitted.
 32. Press `Resume Sync` in notification and confirm clipboard sends resume and dashboard sync state updates.
-33. On Windows desktop, enable `Start ClipSync on Windows login`, save settings, restart Windows session, and confirm ClipSync starts automatically.
-34. Disable `Start ClipSync on Windows login`, save settings, restart Windows session, and confirm ClipSync does not auto-start.
-35. On Windows, close app window and confirm app stays available in tray instead of fully exiting.
+33. On Windows/Linux desktop, enable `Start ClipSync on login`, save settings, restart session, and confirm ClipSync starts automatically.
+34. Disable `Start ClipSync on login`, save settings, restart session, and confirm ClipSync does not auto-start.
+35. On Windows/Linux, close app window and confirm app stays available in tray instead of fully exiting.
 36. From tray menu, click `Open` and confirm main window is restored and focused.
 37. From tray menu, click `Sync On/Off` and confirm dashboard sync state and tray tooltip reflect the new state.
 38. From tray menu, click `Quit` and confirm process exits completely.

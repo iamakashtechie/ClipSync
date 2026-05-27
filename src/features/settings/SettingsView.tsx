@@ -101,11 +101,11 @@ export function SettingsView({
             checked={windowsStartOnLogin}
             onChange={(event) => onWindowsStartOnLoginChange(event.target.checked)}
           />
-          <span>Start ClipSync on Windows login</span>
+          <span>Start ClipSync on desktop login</span>
         </label>
 
         <p className="settings-hint">
-          Windows desktop only: when enabled, ClipSync is configured to launch automatically at user sign-in.
+          Windows/Linux desktop only: when enabled, ClipSync is configured to launch automatically at user sign-in.
         </p>
 
         <label className="settings-checkbox-row" htmlFor="devModeEnabled">

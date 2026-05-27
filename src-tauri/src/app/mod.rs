@@ -9,15 +9,20 @@ use crate::services::settings::{effective_device_name, load_settings};
 use tauri::Manager;
 use std::thread;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri_plugin_autostart::ManagerExt;
 
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+use crate::services::tray::{refresh_tray_state, setup_desktop_tray};
+
 #[cfg(target_os = "windows")]
-use crate::services::tray::{refresh_tray_state, setup_windows_tray};
+const AUTOSTART_EVENT: &str = "WINDOWS_AUTOSTART_APPLY";
+
+#[cfg(target_os = "linux")]
+const AUTOSTART_EVENT: &str = "LINUX_AUTOSTART_APPLY";
 
 pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
     let settings = load_settings(app);
-    let windows_start_on_login = settings.windows_start_on_login;
     let host_name = whoami::fallible::hostname().unwrap_or_else(|_| "unknown-host".to_string());
     let device_name = effective_device_name(&settings, &host_name);
 
@@ -35,11 +40,12 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
     push_diagnostic(&mut s, startup_event);
     drop(s);
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
-        setup_windows_tray(app, app.state::<SharedState>().inner().clone())?;
+        let desktop_start_on_login = settings.windows_start_on_login;
+        setup_desktop_tray(app, app.state::<SharedState>().inner().clone())?;
 
-        let autostart_result = if windows_start_on_login {
+        let autostart_result = if desktop_start_on_login {
             app.autolaunch().enable()
         } else {
             app.autolaunch().disable()
@@ -49,8 +55,8 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
             Ok(_) => {
                 log_backend_event(
                     "SUCCESS",
-                    "WINDOWS_AUTOSTART_APPLY",
-                    if windows_start_on_login {
+                    AUTOSTART_EVENT,
+                    if desktop_start_on_login {
                         "enabled"
                     } else {
                         "disabled"
@@ -60,7 +66,7 @@ pub fn initialize(app: &tauri::AppHandle) -> Result<(), String> {
             Err(err) => {
                 log_backend_event(
                     "FAILED",
-                    "WINDOWS_AUTOSTART_APPLY",
+                    AUTOSTART_EVENT,
                     &format!("failed to apply startup setting: {err}"),
                 );
             }

@@ -1,6 +1,6 @@
 use tauri::State;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::domain::models::AppSettings;
@@ -8,8 +8,14 @@ use crate::domain::state::SharedState;
 use crate::services::logging::{format_backend_event, log_backend, push_diagnostic};
 use crate::services::settings::{effective_device_name, save_settings_to_disk};
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use crate::services::tray::refresh_tray_state;
+
+#[cfg(target_os = "windows")]
+const AUTOSTART_EVENT: &str = "WINDOWS_AUTOSTART_APPLY";
+
+#[cfg(target_os = "linux")]
+const AUTOSTART_EVENT: &str = "LINUX_AUTOSTART_APPLY";
 
 #[tauri::command]
 pub fn toggle_sync(
@@ -34,7 +40,7 @@ pub fn toggle_sync(
         log_backend(&event);
         push_diagnostic(&mut s, event);
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     refresh_tray_state(&app, state.inner());
     Ok(())
 }
@@ -79,7 +85,7 @@ pub fn save_settings(
         s.paired = false;
         s.sync_enabled = false;
 
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
         {
             let apply_result = if s.settings.windows_start_on_login {
                 app.autolaunch().enable()
@@ -90,7 +96,7 @@ pub fn save_settings(
             if let Err(err) = apply_result {
                 let event = format_backend_event(
                     "FAILED",
-                    "WINDOWS_AUTOSTART_APPLY",
+                    AUTOSTART_EVENT,
                     &format!("failed to apply startup setting: {err}"),
                 );
                 log_backend(&event);
@@ -109,7 +115,7 @@ pub fn save_settings(
                     "SUCCESS",
                     "SAVE_SETTINGS",
                     &format!(
-                        "max_image_size_kb={} device_name={} background_mode_enabled={} windows_start_on_login={}",
+                        "max_image_size_kb={} device_name={} background_mode_enabled={} start_on_login={}",
                         s.settings.max_image_size_kb,
                         s.device_name,
                         s.settings.background_mode_enabled,
@@ -127,7 +133,7 @@ pub fn save_settings(
         }
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     refresh_tray_state(&app, state.inner());
     result
 }
@@ -154,7 +160,7 @@ pub fn validate_pairing(
         push_diagnostic(&mut s, event);
         ok
     };
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     refresh_tray_state(&app, state.inner());
     Ok(ok)
 }

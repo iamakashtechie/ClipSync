@@ -119,16 +119,16 @@ const DEFAULT_VALIDATION_CASES: ValidationCase[] = [
   },
   {
     id: 'windows_start_on_login',
-    title: 'Windows start on login',
-    description: 'Windows setting persists and app autostart is enabled/disabled correctly after save and reboot.',
+    title: 'Desktop start on login',
+    description: 'Desktop setting persists and app autostart is enabled/disabled correctly after save and reboot (Windows/Linux).',
     result: 'not-run',
     notes: '',
     last_run_at: '',
   },
   {
     id: 'windows_tray_controls',
-    title: 'Windows tray controls',
-    description: 'Tray menu actions Open, Sync On/Off, and Quit work predictably with window hide/restore behavior.',
+    title: 'Desktop tray controls',
+    description: 'Tray menu actions Open, Sync On/Off, and Quit work predictably with window hide/restore behavior (Windows/Linux).',
     result: 'not-run',
     notes: '',
     last_run_at: '',
@@ -659,11 +659,11 @@ export function useClipSyncController() {
       setSaveMessage('Settings saved. Device name update may require app restart for discovery name refresh.');
       setPaired(false);
       setSyncEnabled(false);
-      uiLog(
-        'SUCCESS',
-        'SAVE_SETTINGS',
-        `max_image_size_kb=${maxImageSizeKb} bg_mode=${backgroundModeEnabled} windows_start_on_login=${windowsStartOnLogin}`,
-      );
+        uiLog(
+          'SUCCESS',
+          'SAVE_SETTINGS',
+          `max_image_size_kb=${maxImageSizeKb} bg_mode=${backgroundModeEnabled} start_on_login=${windowsStartOnLogin}`,
+        );
     } catch (error) {
       uiLog('FAILED', 'SAVE_SETTINGS', String(error));
       setSaveMessage('Failed to save settings.');

@@ -79,7 +79,7 @@ fn toggle_sync_from_tray(app: &tauri::AppHandle, state: &SharedState) {
     refresh_tray_state(app, state);
 }
 
-pub fn setup_windows_tray(app: &tauri::AppHandle, state: SharedState) -> Result<(), String> {
+pub fn setup_desktop_tray(app: &tauri::AppHandle, state: SharedState) -> Result<(), String> {
     let open_item = MenuItem::with_id(app, MENU_OPEN_ID, "Open", true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let toggle_sync_item =

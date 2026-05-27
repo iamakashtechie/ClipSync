@@ -37,7 +37,7 @@ pub fn run() {
             validate_pairing
         ]);
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         builder = builder.plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -47,7 +47,7 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
