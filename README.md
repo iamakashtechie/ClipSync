@@ -140,15 +140,29 @@ Local clipboard sync between Windows, Linux (Ubuntu), and Android using Tauri + 
 | Unsupported: No URI image in clipboard | Android app copies image in a private/inaccessible format or non-URI payload | Native image capture does not trigger; use manual picker fallback path. |
 | Unsupported: Oversized payload | Selected or captured image exceeds configured limit | Payload is rejected locally with diagnostics/status update; app remains stable and continues syncing other payloads. |
 
-## Run
+## Setup and build guides (dev + prod)
 
-### Frontend build check
+### Prerequisites
+
+- Node.js (LTS) + npm.
+- Rust toolchain (stable) for the Tauri backend.
+- Tauri CLI and platform prerequisites (follow the official Tauri prerequisites guide for your OS).
+- Android Studio + Android SDK + adb (only for Android builds).
+- Set `ANDROID_HOME` or `ANDROID_SDK_ROOT` for Android tooling and signing steps.
+
+### Install dependencies
 
 ```powershell
-npm run build
+npm install
 ```
 
-### Tauri desktop dev
+### Development (frontend only)
+
+```powershell
+npm run dev
+```
+
+### Development (Tauri desktop)
 
 ```powershell
 cd src-tauri
@@ -157,35 +171,54 @@ cd ..
 npm run tauri dev
 ```
 
-### Android setup (once)
+### Development (Android)
 
 ```powershell
 npm run tauri android init
-```
-
-### Android dev run
-
-```powershell
 npm run tauri android dev
 ```
 
-### Release candidate checks
+### Production build checks (shared)
 
-```powershell
-npm run rc:check
-```
+- Frontend build only:
 
-### Release candidate desktop package
+  ```powershell
+  npm run build
+  ```
 
-```powershell
-npm run rc:desktop
-```
+- Full release-candidate check (frontend build + Rust check):
 
-### Release candidate Android package
+  ```powershell
+  npm run rc:check
+  ```
 
-```powershell
-npm run rc:android
-```
+### Production build (desktop)
+
+- Desktop package:
+
+  ```powershell
+  npm run tauri build
+  ```
+
+- Release-candidate desktop package (includes `rc:check`):
+
+  ```powershell
+  npm run rc:desktop
+  ```
+
+### Production build (Android)
+
+- Android package:
+
+  ```powershell
+  npm run tauri android build
+  ```
+
+- Release-candidate Android package (includes `rc:check`):
+
+  ```powershell
+  npm run rc:android
+  ```
 
 ### Android release APK signing and install (PowerShell)
 
