@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct AppSettings {
     pub max_image_size_kb: u32,
-    pub pairing_code: String,
+    pub trusted_peers: std::collections::HashMap<String, String>, // maps device_name -> token
     pub device_name_override: String,
     pub background_mode_enabled: bool,
     pub windows_start_on_login: bool,
@@ -15,7 +15,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             max_image_size_kb: 2048,
-            pairing_code: "".to_string(),
+            trusted_peers: std::collections::HashMap::new(),
             device_name_override: "".to_string(),
             background_mode_enabled: true,
             windows_start_on_login: false,
@@ -37,12 +37,20 @@ pub struct UdpDiscoveryBeacon {
     pub is_reply: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TransportMessage {
+    PairingRequest {
+        device_name: String,
+        token: String,
+    },
+    PairingResponse {
+        device_name: String,
+        accepted: bool,
+    },
     Hello {
         device_name: String,
-        pairing_code: String,
+        token: String,
     },
     HelloAck {
         device_name: String,

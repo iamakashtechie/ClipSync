@@ -10,9 +10,10 @@ mod services;
 use std::sync::{Arc, Mutex};
 
 use commands::{
-    consume_remote_image, consume_remote_text, get_diagnostics, get_settings, get_status,
-    push_local_image_payload, push_local_text_clipboard, report_app_visibility, save_settings,
-    toggle_sync, validate_pairing,
+    approve_connection, consume_remote_image, consume_remote_text, get_diagnostics, get_settings,
+    get_status, push_local_image_payload, push_local_text_clipboard, reject_connection,
+    report_app_visibility, request_connection, save_settings, toggle_sync,
+    read_clipboard_text, write_clipboard_text,
 };
 use domain::state::AppState;
 
@@ -22,8 +23,14 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default()
         .manage(initial_state)
-        .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![
+        .plugin(tauri_plugin_opener::init());
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        builder = builder.plugin(tauri_plugin_clipboard_manager::init());
+    }
+
+    builder = builder.invoke_handler(tauri::generate_handler![
             get_status,
             report_app_visibility,
             get_diagnostics,
@@ -34,10 +41,14 @@ pub fn run() {
             toggle_sync,
             get_settings,
             save_settings,
-            validate_pairing
+            request_connection,
+            approve_connection,
+            reject_connection,
+            read_clipboard_text,
+            write_clipboard_text
         ]);
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
         builder = builder.plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -47,7 +58,7 @@ pub fn run() {
 
     builder
         .on_window_event(|window, event| {
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
             {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();

@@ -22,7 +22,7 @@ pub fn get_status(state: State<'_, SharedState>) -> Result<serde_json::Value, St
     Ok(serde_json::json!({
         "status": if !devices.is_empty() { "connected" } else { "searching" },
         "sync_enabled": state.sync_enabled,
-        "paired": state.paired,
+        "paired": !state.settings.trusted_peers.is_empty(),
         "devices": devices,
         "peer_transport": peer_transport,
         "runtime": {
@@ -38,7 +38,10 @@ pub fn get_status(state: State<'_, SharedState>) -> Result<serde_json::Value, St
             "received": state.sync_received_count,
             "dropped": state.sync_dropped_count,
             "stale_rejected": state.sync_rejected_stale_count
-        }
+        },
+        "pending_requests": state.pending_pairing_requests.keys().cloned().collect::<Vec<String>>(),
+        "outgoing_requests": state.outgoing_pairing_requests.keys().cloned().collect::<Vec<String>>(),
+        "trusted_peers": state.settings.trusted_peers.keys().cloned().collect::<Vec<String>>()
     }))
 }
 

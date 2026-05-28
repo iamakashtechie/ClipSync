@@ -5,7 +5,6 @@ use crate::domain::models::{AppSettings, IncomingImage};
 
 pub struct AppState {
     pub sync_enabled: bool,
-    pub paired: bool,
     pub discovered: HashMap<String, String>,
     pub discovered_last_seen_ms: HashMap<String, u64>,
     pub transport_status: HashMap<String, String>,
@@ -18,6 +17,8 @@ pub struct AppState {
     pub sync_rejected_stale_count: u64,
     pub pending_remote_text: Option<String>,
     pub pending_remote_image: Option<IncomingImage>,
+    pub pending_pairing_requests: HashMap<String, String>, // peer_name -> token
+    pub outgoing_pairing_requests: HashMap<String, String>, // peer_name -> token
     pub last_applied_timestamp_ms: u64,
     pub last_applied_sender: String,
     pub diagnostic_events: VecDeque<String>,
@@ -31,7 +32,6 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             sync_enabled: true,
-            paired: false,
             discovered: HashMap::new(),
             discovered_last_seen_ms: HashMap::new(),
             transport_status: HashMap::new(),
@@ -44,6 +44,8 @@ impl Default for AppState {
             sync_rejected_stale_count: 0,
             pending_remote_text: None,
             pending_remote_image: None,
+            pending_pairing_requests: HashMap::new(),
+            outgoing_pairing_requests: HashMap::new(),
             last_applied_timestamp_ms: 0,
             last_applied_sender: "".to_string(),
             diagnostic_events: VecDeque::new(),

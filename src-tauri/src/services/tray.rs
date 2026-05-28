@@ -48,7 +48,7 @@ fn toggle_sync_from_tray(app: &tauri::AppHandle, state: &SharedState) {
     let mut event_to_log: Option<String> = None;
 
     if let Ok(mut s) = state.lock() {
-        if !s.sync_enabled && !s.paired {
+        if !s.sync_enabled && s.settings.trusted_peers.is_empty() {
             let event = format_backend_event(
                 "FAILED",
                 "SYNC_TOGGLE_TRAY",
@@ -79,7 +79,7 @@ fn toggle_sync_from_tray(app: &tauri::AppHandle, state: &SharedState) {
     refresh_tray_state(app, state);
 }
 
-pub fn setup_windows_tray(app: &tauri::AppHandle, state: SharedState) -> Result<(), String> {
+pub fn setup_desktop_tray(app: &tauri::AppHandle, state: SharedState) -> Result<(), String> {
     let open_item = MenuItem::with_id(app, MENU_OPEN_ID, "Open", true, None::<&str>)
         .map_err(|e| e.to_string())?;
     let toggle_sync_item =
@@ -121,9 +121,9 @@ pub fn setup_windows_tray(app: &tauri::AppHandle, state: SharedState) -> Result<
             }
         });
 
-    if let Some(icon) = app.default_window_icon().cloned() {
-        tray_builder = tray_builder.icon(icon);
-    }
+    let icon_bytes = include_bytes!("../../icons/icon.png");
+    let icon = tauri::image::Image::from_bytes(icon_bytes).map_err(|e| e.to_string())?;
+    tray_builder = tray_builder.icon(icon);
 
     tray_builder.build(app).map_err(|e| e.to_string())?;
     refresh_tray_state(app, &state);

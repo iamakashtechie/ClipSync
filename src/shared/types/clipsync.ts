@@ -49,11 +49,14 @@ export type StatusResponse = {
   runtime?: RuntimeHealth;
   peer_transport?: Record<string, string>;
   sync_stats?: SyncStats;
+  pending_requests?: string[];
+  outgoing_requests?: string[];
+  trusted_peers?: string[];
 };
 
 export type SettingsResponse = {
   max_image_size_kb: number;
-  pairing_code: string;
+  trusted_peers: Record<string, string>;
   device_name_override: string;
   background_mode_enabled: boolean;
   windows_start_on_login: boolean;

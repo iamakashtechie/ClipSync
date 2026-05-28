@@ -1,8 +1,8 @@
 type SettingsViewProps = {
   maxImageSizeKb: number;
   onMaxImageSizeKbChange: (value: number) => void;
-  pairingCode: string;
-  onPairingCodeChange: (value: string) => void;
+  
+  
   deviceNameOverride: string;
   onDeviceNameOverrideChange: (value: string) => void;
   backgroundModeEnabled: boolean;
@@ -18,8 +18,8 @@ type SettingsViewProps = {
 export function SettingsView({
   maxImageSizeKb,
   onMaxImageSizeKbChange,
-  pairingCode,
-  onPairingCodeChange,
+  
+  
   deviceNameOverride,
   onDeviceNameOverrideChange,
   backgroundModeEnabled,
@@ -48,18 +48,7 @@ export function SettingsView({
           className="settings-input"
         />
 
-        <label className="settings-label" htmlFor="pairingCode">
-          Mandatory pairing code (4 digits)
-        </label>
-        <input
-          id="pairingCode"
-          type="text"
-          maxLength={4}
-          value={pairingCode}
-          onChange={(event) => onPairingCodeChange(event.target.value.replace(/\D/g, ''))}
-          className="settings-input"
-          placeholder="0000"
-        />
+        
 
         <label className="settings-label" htmlFor="deviceNameOverride">
           Device name (optional)
@@ -101,11 +90,11 @@ export function SettingsView({
             checked={windowsStartOnLogin}
             onChange={(event) => onWindowsStartOnLoginChange(event.target.checked)}
           />
-          <span>Start ClipSync on Windows login</span>
+          <span>Start ClipSync on desktop login</span>
         </label>
 
         <p className="settings-hint">
-          Windows desktop only: when enabled, ClipSync is configured to launch automatically at user sign-in.
+          Windows/Linux desktop only: when enabled, ClipSync is configured to launch automatically at user sign-in.
         </p>
 
         <label className="settings-checkbox-row" htmlFor="devModeEnabled">

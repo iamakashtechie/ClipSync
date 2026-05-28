@@ -18,14 +18,17 @@ export default function AppShell() {
             devModeEnabled={controller.devModeEnabled}
             status={controller.status}
             paired={controller.paired}
-            unlockCode={controller.unlockCode}
-            onUnlockCodeChange={controller.setUnlockCode}
-            onUnlockSync={controller.onUnlockSync}
             syncEnabled={controller.syncEnabled}
             onToggleSync={controller.onToggleSync}
             syncMessage={controller.syncMessage}
             devices={controller.devices}
             peerTransport={controller.peerTransport}
+            pendingRequests={controller.pendingRequests}
+            outgoingRequests={controller.outgoingRequests}
+            trustedPeers={controller.trustedPeers}
+            onConnectToPeer={controller.onConnectToPeer}
+            onApproveConnection={controller.onApproveConnection}
+            onRejectConnection={controller.onRejectConnection}
             syncStats={controller.syncStats}
             diagnostics={controller.diagnostics}
             runtimeHealth={controller.runtimeHealth}
@@ -52,8 +55,8 @@ export default function AppShell() {
           <SettingsView
             maxImageSizeKb={controller.maxImageSizeKb}
             onMaxImageSizeKbChange={controller.setMaxImageSizeKb}
-            pairingCode={controller.pairingCode}
-            onPairingCodeChange={controller.setPairingCode}
+            
+            
             deviceNameOverride={controller.deviceNameOverride}
             onDeviceNameOverrideChange={controller.setDeviceNameOverride}
             backgroundModeEnabled={controller.backgroundModeEnabled}

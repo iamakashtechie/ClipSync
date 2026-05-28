@@ -2,6 +2,9 @@ package com.iamakashtechie.clipsync
 
 import android.content.Context
 import android.content.Intent
+import org.json.JSONObject
+import java.io.OutputStreamWriter
+import java.net.Socket
 
 const val CLIPSYNC_NATIVE_PREFS = "clipsync_native_bridge"
 const val CLIPSYNC_ACTION_NATIVE_CLIPBOARD_CHANGED =
@@ -104,6 +107,28 @@ fun publishNativeClipboardImage(context: Context, mimeType: String, imageBase64:
   )
 }
 
+fun sendToRustLocalhost(type: String, text: String?, mimeType: String?, imageBase64: String?) {
+  Thread {
+    try {
+      val socket = Socket("127.0.0.1", 10191)
+      socket.soTimeout = 2000
+      val writer = OutputStreamWriter(socket.getOutputStream(), "UTF-8")
+      val json = JSONObject().apply {
+        put("type", type)
+        if (text != null) put("text", text)
+        if (mimeType != null) put("mimeType", mimeType)
+        if (imageBase64 != null) put("imageBase64", imageBase64)
+      }
+      writer.write(json.toString())
+      writer.flush()
+      writer.close()
+      socket.close()
+    } catch (e: Exception) {
+      // Ignored: command server not started yet
+    }
+  }.start()
+}
+
 private fun publishNativePayload(context: Context, payload: NativeClipboardPayload, signature: String) {
   val prefs = context.getSharedPreferences(CLIPSYNC_NATIVE_PREFS, Context.MODE_PRIVATE)
   val last = prefs.getString(KEY_LAST_DISPATCHED_SIGNATURE, "")
@@ -129,6 +154,11 @@ private fun publishNativePayload(context: Context, payload: NativeClipboardPaylo
     putExtra(CLIPSYNC_EXTRA_SOURCE, payload.source)
   }
   context.sendBroadcast(intent)
+
+  val isSyncEnabled = prefs.getBoolean("native_sync_enabled", true)
+  if (isSyncEnabled) {
+    sendToRustLocalhost(payload.type, payload.text, payload.mimeType, payload.imageBase64)
+  }
 }
 
 fun consumePendingNativeClipboard(context: Context): NativeClipboardPayload? {

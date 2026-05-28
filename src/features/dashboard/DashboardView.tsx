@@ -5,20 +5,24 @@ type DashboardViewProps = {
   devModeEnabled?: boolean;
   status: SyncStatus;
   paired: boolean;
-  unlockCode: string;
-  onUnlockCodeChange: (value: string) => void;
-  onUnlockSync: () => void;
+  
   syncEnabled: boolean;
   onToggleSync: () => void;
   syncMessage: string;
   devices: string[];
   peerTransport: Record<string, string>;
+  pendingRequests: string[];
+  outgoingRequests: string[];
+  trustedPeers: string[];
   syncStats: SyncStats;
   diagnostics: string[];
   runtimeHealth: RuntimeHealth;
   manualSyncText: string;
   onManualSyncTextChange: (value: string) => void;
   onManualSync: () => void;
+  onConnectToPeer: (peerName: string) => void;
+  onApproveConnection: (peerName: string) => void;
+  onRejectConnection: (peerName: string) => void;
   remoteTextPreview: string;
   nativeBridgeStatus: string;
   nativeBridgeStats: NativeBridgeStats;
@@ -32,20 +36,23 @@ export function DashboardView({
   devModeEnabled = false,
   status,
   paired,
-  unlockCode,
-  onUnlockCodeChange,
-  onUnlockSync,
   syncEnabled,
   onToggleSync,
   syncMessage,
   devices,
   peerTransport,
+  pendingRequests,
+  outgoingRequests,
+  trustedPeers,
   syncStats,
   diagnostics,
   runtimeHealth,
   manualSyncText,
   onManualSyncTextChange,
   onManualSync,
+  onConnectToPeer,
+  onApproveConnection,
+  onRejectConnection,
   remoteTextPreview,
   nativeBridgeStatus,
   nativeBridgeStats,
@@ -70,20 +77,8 @@ export function DashboardView({
         </p>
 
         <p className="text-gray-400 mb-6">
-          Security status: {paired ? 'Paired' : 'Locked (pairing required)'}
+          {paired ? '🔒 Paired — your devices are trusted' : '🔓 Not paired — connect to a device below to start syncing'}
         </p>
-
-        <div className="unlock-row">
-          <input
-            type="text"
-            maxLength={4}
-            value={unlockCode}
-            onChange={(event) => onUnlockCodeChange(event.target.value.replace(/\D/g, ''))}
-            className="settings-input"
-            placeholder="Enter 4-digit code"
-          />
-          <button onClick={onUnlockSync} className="unlock-btn">Unlock Sync</button>
-        </div>
 
         <button
           onClick={onToggleSync}
@@ -95,22 +90,68 @@ export function DashboardView({
         {syncMessage ? <p className="settings-hint mt-4">{syncMessage}</p> : null}
       </div>
 
-      <div className="bg-gray-900 rounded-3xl p-8">
+      <div className="bg-gray-900 rounded-3xl p-8 mt-6">
         <h3 className="text-xl font-medium mb-4">Discovered Devices</h3>
         {devices.length > 0 ? (
-          devices.map((device, index) => (
-            <div key={`${device}-${index}`} className="bg-gray-800 p-4 rounded-2xl mb-2 flex items-center gap-3">
-              <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
-              <div>
-                <div>{device}</div>
-                {devModeEnabled && (
-                  <div className="text-xs text-gray-400 mt-4">
-                    Transport: {peerTransport[device] ?? 'discovered (handshake pending)'}
+          devices.map((device, index) => {
+            const isTrusted = trustedPeers.includes(device);
+            const isPending = pendingRequests.includes(device);
+            const isOutgoing = outgoingRequests?.includes(device);
+            const isConnected = peerTransport[device]?.includes('authenticated');
+
+            return (
+              <div key={`${device}-${index}`} className="bg-gray-800 p-4 rounded-2xl mb-2 flex flex-row items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-400' : isTrusted ? 'bg-blue-400' : 'bg-gray-500'}`}></div>
+                  <div>
+                    <div className="font-medium">{device}</div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      {devModeEnabled ? `Transport: ${peerTransport[device] ?? 'discovered'}` : (
+                        isConnected ? 'Connected' : isTrusted ? 'Trusted (Offline)' : isPending ? 'Incoming pairing request' : isOutgoing ? 'Pairing request sent...' : 'Available'
+                      )}
+                    </div>
                   </div>
-                )}
+                </div>
+                
+                <div className="flex gap-2">
+                  {isPending && !isTrusted && (
+                    <>
+                      <button 
+                        onClick={() => onApproveConnection(device)}
+                        className="px-4 py-2 bg-green-500 hover:bg-green-600 rounded-xl text-sm font-medium transition-colors"
+                      >
+                        Approve
+                      </button>
+                      <button 
+                        onClick={() => onRejectConnection(device)}
+                        className="px-4 py-2 bg-red-500 hover:bg-red-600 rounded-xl text-sm font-medium transition-colors"
+                      >
+                        Reject
+                      </button>
+                    </>
+                  )}
+                  {isOutgoing && !isTrusted && (
+                    <span className="px-4 py-2 bg-gray-700 rounded-xl text-sm font-medium text-gray-400">
+                      Request Sent
+                    </span>
+                  )}
+                  {!isTrusted && !isPending && !isOutgoing && (
+                    <button 
+                      onClick={() => onConnectToPeer(device)}
+                      className="px-4 py-2 bg-blue-500 hover:bg-blue-600 rounded-xl text-sm font-medium transition-colors"
+                    >
+                      Connect
+                    </button>
+                  )}
+                  {isTrusted && (
+                    <span className="px-4 py-2 bg-gray-700 rounded-xl text-sm font-medium text-gray-300">
+                      Paired
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         ) : (
           <div className="bg-gray-800 rounded-2xl p-8 text-center text-gray-400">
             No devices found yet.<br />Waiting for your phone...

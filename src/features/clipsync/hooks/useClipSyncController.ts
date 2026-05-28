@@ -10,8 +10,12 @@ import {
   reportAppVisibility,
   saveSettings,
   toggleSync,
-  validatePairing,
-} from '../../../shared/api/clipsyncApi';
+  requestConnection,
+  approveConnection,
+  rejectConnection,
+  readClipboardText,
+  writeClipboardText,
+  } from '../../../shared/api/clipsyncApi';
 import { DEFAULT_RUNTIME_HEALTH, DEFAULT_SYNC_STATS } from '../../../shared/lib/defaults';
 import { uiLog } from '../../../shared/lib/logger';
 import type { AppTab, NativeBridgeStats, SyncStatus, ValidationCase, ValidationResult } from '../../../shared/types/clipsync';
@@ -119,16 +123,16 @@ const DEFAULT_VALIDATION_CASES: ValidationCase[] = [
   },
   {
     id: 'windows_start_on_login',
-    title: 'Windows start on login',
-    description: 'Windows setting persists and app autostart is enabled/disabled correctly after save and reboot.',
+    title: 'Desktop start on login',
+    description: 'Desktop setting persists and app autostart is enabled/disabled correctly after save and reboot (Windows/Linux).',
     result: 'not-run',
     notes: '',
     last_run_at: '',
   },
   {
     id: 'windows_tray_controls',
-    title: 'Windows tray controls',
-    description: 'Tray menu actions Open, Sync On/Off, and Quit work predictably with window hide/restore behavior.',
+    title: 'Desktop tray controls',
+    description: 'Tray menu actions Open, Sync On/Off, and Quit work predictably with window hide/restore behavior (Windows/Linux).',
     result: 'not-run',
     notes: '',
     last_run_at: '',
@@ -170,20 +174,23 @@ export function useClipSyncController() {
   const [syncEnabled, setSyncEnabled] = useState(true);
   const [status, setStatus] = useState<SyncStatus>('searching');
   const [devices, setDevices] = useState<string[]>([]);
-  const [paired, setPaired] = useState(false);
 
   const [maxImageSizeKb, setMaxImageSizeKb] = useState(2048);
-  const [pairingCode, setPairingCode] = useState('');
+  
   const [deviceNameOverride, setDeviceNameOverride] = useState('');
   const [backgroundModeEnabled, setBackgroundModeEnabled] = useState(true);
   const [windowsStartOnLogin, setWindowsStartOnLogin] = useState(false);
   const [devModeEnabled, setDevModeEnabled] = useState(false);
 
-  const [unlockCode, setUnlockCode] = useState('');
+
   const [saveMessage, setSaveMessage] = useState('');
   const [syncMessage, setSyncMessage] = useState('');
 
   const [peerTransport, setPeerTransport] = useState<Record<string, string>>({});
+  const [pendingRequests, setPendingRequests] = useState<string[]>([]);
+  const [outgoingRequests, setOutgoingRequests] = useState<string[]>([]);
+  const [trustedPeers, setTrustedPeers] = useState<string[]>([]);
+  const paired = trustedPeers.length > 0;
   const [syncStats, setSyncStats] = useState(DEFAULT_SYNC_STATS);
   const [diagnostics, setDiagnostics] = useState<string[]>([]);
   const [runtimeHealth, setRuntimeHealth] = useState(DEFAULT_RUNTIME_HEALTH);
@@ -211,7 +218,6 @@ export function useClipSyncController() {
   const lastNativeEventSignatureRef = useRef('');
   const previousStatusRef = useRef<SyncStatus>('searching');
   const previousDevicesRef = useRef<string[]>([]);
-  const previousPairedRef = useRef(false);
 
   const syncAndroidBackgroundPolicy = (enabled: boolean) => {
     try {
@@ -232,9 +238,11 @@ export function useClipSyncController() {
         setStatus(res.status);
         setDevices(res.devices);
         setSyncEnabled(res.sync_enabled);
-        setPaired(res.paired);
         setRuntimeHealth(res.runtime ?? DEFAULT_RUNTIME_HEALTH);
         setPeerTransport(res.peer_transport ?? {});
+        setPendingRequests(res.pending_requests ?? []);
+        setOutgoingRequests(res.outgoing_requests ?? []);
+        setTrustedPeers(res.trusted_peers ?? []);
         setSyncStats(res.sync_stats ?? DEFAULT_SYNC_STATS);
 
         if (previousStatusRef.current !== res.status) {
@@ -249,10 +257,7 @@ export function useClipSyncController() {
           previousDevicesRef.current = nextDevices;
         }
 
-        if (previousPairedRef.current !== res.paired) {
-          uiLog('INFO', 'PAIR_STATE_CHANGED', `${previousPairedRef.current} -> ${res.paired}`);
-          previousPairedRef.current = res.paired;
-        }
+
       } catch (error) {
         uiLog('FAILED', 'GET_STATUS', String(error));
       }
@@ -271,7 +276,7 @@ export function useClipSyncController() {
       try {
         const settings = await getSettings();
         setMaxImageSizeKb(settings.max_image_size_kb);
-        setPairingCode(settings.pairing_code);
+        
         setDeviceNameOverride(settings.device_name_override ?? '');
         setBackgroundModeEnabled(settings.background_mode_enabled ?? true);
         setWindowsStartOnLogin(settings.windows_start_on_login ?? false);
@@ -591,7 +596,7 @@ export function useClipSyncController() {
           setRemoteTextPreview(remote);
           uiLog('SUCCESS', 'TEXT_RECEIVED', `len=${remote.length}`);
           try {
-            await navigator.clipboard.writeText(remote);
+            await writeClipboardText(remote);
             uiLog('SUCCESS', 'LOCAL_CLIPBOARD_WRITE', 'remote text applied');
           } catch {
             uiLog('FAILED', 'LOCAL_CLIPBOARD_WRITE', 'clipboard API write failed');
@@ -612,7 +617,7 @@ export function useClipSyncController() {
       }
 
       try {
-        const localText = await navigator.clipboard.readText();
+        const localText = await readClipboardText();
         if (localText && localText !== lastClipboardTextRef.current) {
           lastClipboardTextRef.current = localText;
           await pushLocalTextClipboard(localText);
@@ -640,16 +645,11 @@ export function useClipSyncController() {
   };
 
   const onSaveSettings = async () => {
-    if (!/^\d{4}$/.test(pairingCode)) {
-      setSaveMessage('Pairing code must be exactly 4 digits.');
-      uiLog('FAILED', 'SAVE_SETTINGS', 'invalid pairing code format');
-      return;
-    }
+    
 
     try {
       await saveSettings({
         maxImageSizeKb,
-        pairingCode,
         deviceNameOverride,
         backgroundModeEnabled,
         windowsStartOnLogin,
@@ -657,44 +657,18 @@ export function useClipSyncController() {
       });
       syncAndroidBackgroundPolicy(backgroundModeEnabled);
       setSaveMessage('Settings saved. Device name update may require app restart for discovery name refresh.');
-      setPaired(false);
-      setSyncEnabled(false);
-      uiLog(
-        'SUCCESS',
-        'SAVE_SETTINGS',
-        `max_image_size_kb=${maxImageSizeKb} bg_mode=${backgroundModeEnabled} windows_start_on_login=${windowsStartOnLogin}`,
-      );
+        uiLog(
+          'SUCCESS',
+          'SAVE_SETTINGS',
+          `max_image_size_kb=${maxImageSizeKb} bg_mode=${backgroundModeEnabled} start_on_login=${windowsStartOnLogin}`,
+        );
     } catch (error) {
       uiLog('FAILED', 'SAVE_SETTINGS', String(error));
       setSaveMessage('Failed to save settings.');
     }
   };
 
-  const onUnlockSync = async () => {
-    if (!/^\d{4}$/.test(unlockCode)) {
-      setSyncMessage('Enter your 4-digit pairing code to unlock sync.');
-      uiLog('FAILED', 'VALIDATE_PAIRING', 'unlock code is not 4 digits');
-      return;
-    }
-
-    try {
-      const ok = await validatePairing(unlockCode);
-      if (ok) {
-        setPaired(true);
-        setSyncMessage('Pairing verified. You can enable sync now.');
-        uiLog('SUCCESS', 'VALIDATE_PAIRING', 'pairing verified');
-      } else {
-        setPaired(false);
-        setSyncEnabled(false);
-        setSyncMessage('Invalid pairing code.');
-        uiLog('FAILED', 'VALIDATE_PAIRING', 'pairing mismatch');
-      }
-    } catch (error) {
-      uiLog('FAILED', 'VALIDATE_PAIRING', String(error));
-      setSyncMessage('Unable to verify pairing code right now.');
-    }
-  };
-
+  
   const onManualSync = async () => {
     if (!manualSyncText.trim()) {
       setSyncMessage('Enter text to send.');
@@ -835,17 +809,48 @@ export function useClipSyncController() {
     }
   };
 
+  const onConnectToPeer = async (peerName: string) => {
+    try {
+      await requestConnection(peerName);
+      setSyncMessage(`Sent connection request to ${peerName}.`);
+      uiLog('SUCCESS', 'REQUEST_CONNECTION', peerName);
+    } catch (err) {
+      setSyncMessage(`Failed to connect to ${peerName}.`);
+      uiLog('FAILED', 'REQUEST_CONNECTION', String(err));
+    }
+  };
+
+  const onApproveConnection = async (peerName: string) => {
+    try {
+      await approveConnection(peerName);
+      setSyncMessage(`Approved connection from ${peerName}.`);
+      uiLog('SUCCESS', 'APPROVE_CONNECTION', peerName);
+    } catch (err) {
+      setSyncMessage(`Failed to approve ${peerName}.`);
+      uiLog('FAILED', 'APPROVE_CONNECTION', String(err));
+    }
+  };
+
+  const onRejectConnection = async (peerName: string) => {
+    try {
+      await rejectConnection(peerName);
+      setSyncMessage(`Rejected connection from ${peerName}.`);
+      uiLog('SUCCESS', 'REJECT_CONNECTION', peerName);
+    } catch (err) {
+      setSyncMessage(`Failed to reject ${peerName}.`);
+      uiLog('FAILED', 'REJECT_CONNECTION', String(err));
+    }
+  };
+
   return {
     currentTab,
     setCurrentTab,
     syncEnabled,
     status,
     devices,
-    paired,
+    paired: trustedPeers.length > 0,
     maxImageSizeKb,
     setMaxImageSizeKb,
-    pairingCode,
-    setPairingCode,
     deviceNameOverride,
     setDeviceNameOverride,
     backgroundModeEnabled,
@@ -854,11 +859,12 @@ export function useClipSyncController() {
     setWindowsStartOnLogin,
     devModeEnabled,
     setDevModeEnabled,
-    unlockCode,
-    setUnlockCode,
     saveMessage,
     syncMessage,
     peerTransport,
+    pendingRequests,
+    outgoingRequests,
+    trustedPeers,
     syncStats,
     diagnostics,
     runtimeHealth,
@@ -872,7 +878,9 @@ export function useClipSyncController() {
     remoteImagePreview,
     onToggleSync,
     onSaveSettings,
-    onUnlockSync,
+    onConnectToPeer,
+    onApproveConnection,
+    onRejectConnection,
     onManualSync,
     onPickManualImage,
     onManualImageSync,

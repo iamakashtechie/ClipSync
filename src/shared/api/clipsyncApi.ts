@@ -25,8 +25,8 @@ export async function consumeRemoteImage(): Promise<IncomingImage | null> {
   return invoke<IncomingImage | null>('consume_remote_image');
 }
 
-export async function pushLocalTextClipboard(content: string): Promise<void> {
-  await invoke('push_local_text_clipboard', { content });
+export async function pushLocalTextClipboard(text: string): Promise<void> {
+  await invoke('push_local_text_clipboard', { text });
 }
 
 export async function toggleSync(enabled: boolean): Promise<void> {
@@ -35,7 +35,6 @@ export async function toggleSync(enabled: boolean): Promise<void> {
 
 export async function saveSettings(payload: {
   maxImageSizeKb: number;
-  pairingCode: string;
   deviceNameOverride: string;
   backgroundModeEnabled: boolean;
   windowsStartOnLogin: boolean;
@@ -44,13 +43,29 @@ export async function saveSettings(payload: {
   await invoke('save_settings', payload);
 }
 
-export async function validatePairing(code: string): Promise<boolean> {
-  return invoke<boolean>('validate_pairing', { code });
-}
-
 export async function pushLocalImagePayload(imageBase64: string, mimeType: string): Promise<void> {
   await invoke('push_local_image_payload', {
     imageBase64,
     mimeType,
   });
+}
+
+export async function requestConnection(peerName: string): Promise<void> {
+  await invoke('request_connection', { peerName });
+}
+
+export async function approveConnection(peerName: string): Promise<void> {
+  await invoke('approve_connection', { peerName });
+}
+
+export async function rejectConnection(peerName: string): Promise<void> {
+  await invoke('reject_connection', { peerName });
+}
+
+export async function readClipboardText(): Promise<string | null> {
+  return invoke<string | null>('read_clipboard_text');
+}
+
+export async function writeClipboardText(text: string): Promise<void> {
+  await invoke('write_clipboard_text', { text });
 }

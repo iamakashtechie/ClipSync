@@ -1,80 +1,32 @@
+use std::time::Duration;
 use tauri::State;
 
 use crate::domain::models::{IncomingImage, TransportMessage};
 use crate::domain::state::SharedState;
-use crate::network::set_transport_status;
 use crate::network::transport::send_transport_payload_to_peer;
-use crate::services::hashing::{compute_image_hash, compute_text_hash, remember_hash};
-use crate::services::logging::{
-    format_backend_event, log_backend, log_backend_event_with_state, now_ms, push_diagnostic,
-};
-use crate::services::security::is_private_or_loopback;
-
-fn estimate_base64_bytes(base64: &str) -> usize {
-    let trimmed = base64.trim();
-    if trimmed.is_empty() {
-        return 0;
-    }
-
-    let padding = if trimmed.ends_with("==") {
-        2
-    } else if trimmed.ends_with('=') {
-        1
-    } else {
-        0
-    };
-
-    ((trimmed.len() * 3) / 4).saturating_sub(padding)
-}
+use crate::services::hashing::{compute_text_hash, compute_image_hash, remember_hash};
+use crate::services::logging::{format_backend_event, log_backend, now_ms, push_diagnostic};
 
 #[tauri::command]
 pub fn consume_remote_text(state: State<'_, SharedState>) -> Result<Option<String>, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
-    let consumed = s.pending_remote_text.take();
-    if let Some(text) = &consumed {
-        let event =
-            format_backend_event("SUCCESS", "TEXT_CONSUMED", &format!("len={}", text.len()));
-        log_backend(&event);
-        push_diagnostic(&mut s, event);
-    }
-    Ok(consumed)
+    Ok(s.pending_remote_text.take())
 }
 
 #[tauri::command]
-pub fn consume_remote_image(
-    state: State<'_, SharedState>,
-) -> Result<Option<IncomingImage>, String> {
+pub fn consume_remote_image(state: State<'_, SharedState>) -> Result<Option<IncomingImage>, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
-    let consumed = s.pending_remote_image.take();
-    if let Some(image) = &consumed {
-        let event = format_backend_event(
-            "SUCCESS",
-            "IMAGE_CONSUMED",
-            &format!(
-                "mime_type={} bytes(base64)={}",
-                image.mime_type,
-                image.image_base64.len()
-            ),
-        );
-        log_backend(&event);
-        push_diagnostic(&mut s, event);
-    }
-    Ok(consumed)
+    Ok(s.pending_remote_image.take())
 }
 
-#[tauri::command]
-pub async fn push_local_text_clipboard(
-    content: String,
-    state: State<'_, SharedState>,
+pub fn push_local_text_clipboard_impl(
+    text: String,
+    state_clone: SharedState,
 ) -> Result<(), String> {
-    if content.trim().is_empty() {
-        log_backend_event_with_state(state.inner(), "FAILED", "TEXT_SEND_LOCAL", "empty payload");
-        return Ok(());
-    }
+    let (sender_id, targets, hash, timestamp_ms, allow_sync) = {
+        let mut s = state_clone.lock().map_err(|e| e.to_string())?;
 
-    let (sender_id, pairing_code, peers, message_hash, timestamp_ms, allow_sync) = {
-        let mut s = state.lock().map_err(|e| e.to_string())?;
-        let hash = compute_text_hash(&s.device_name, &content);
+        let hash = compute_text_hash(&s.device_name, &text);
         let timestamp_ms = now_ms();
 
         if s.recent_hashes.contains(&hash) {
@@ -87,31 +39,33 @@ pub async fn push_local_text_clipboard(
         }
 
         remember_hash(&mut s, hash);
-        let discovered = s
+        let targets = s
             .discovered
             .iter()
-            .filter(|(name, _)| !name.contains(&s.device_name))
-            .map(|(name, addr)| (name.clone(), addr.clone()))
-            .collect::<Vec<(String, String)>>();
+            .filter_map(|(name, addr)| {
+                s.settings.trusted_peers.get(name).map(|token| {
+                    (name.clone(), addr.clone(), token.clone())
+                })
+            })
+            .filter(|(name, _, _)| !name.contains(&s.device_name))
+            .collect::<Vec<(String, String, String)>>();
 
         (
             s.device_name.clone(),
-            s.settings.pairing_code.clone(),
-            discovered,
+            targets,
             hash,
             timestamp_ms,
             s.sync_enabled
-                && s.paired
                 && (s.is_app_foreground || s.settings.background_mode_enabled),
         )
     };
 
     if !allow_sync {
-        if let Ok(mut s) = state.lock() {
+        if let Ok(mut s) = state_clone.lock() {
             let event = format_backend_event(
                 "FAILED",
                 "TEXT_SEND_LOCAL",
-                "blocked: app background and background mode disabled",
+                "blocked: sync disabled or backgrounded",
             );
             log_backend(&event);
             push_diagnostic(&mut s, event);
@@ -119,98 +73,73 @@ pub async fn push_local_text_clipboard(
         return Ok(());
     }
 
-    log_backend_event_with_state(
-        state.inner(),
-        "INFO",
-        "TEXT_SEND_LOCAL",
-        &format!("dispatching to {} peer(s)", peers.len()),
-    );
+    let payload = TransportMessage::SyncText {
+        sender_id: sender_id.clone(),
+        timestamp_ms,
+        message_hash: hash,
+        text,
+    };
 
-    for (peer_name, addr) in peers {
-        let host = addr.split(':').next().unwrap_or_default();
-        if !is_private_or_loopback(host) {
-            set_transport_status(
-                state.inner(),
-                peer_name,
-                "skipped: non-local address".to_string(),
-            );
-            continue;
+    tauri::async_runtime::spawn(async move {
+        let mut tasks = vec![];
+        for (peer_name, addr, token) in targets {
+            let s_clone = state_clone.clone();
+            let p_clone = payload.clone();
+            let n_clone = peer_name.clone();
+            let sender_id_clone = sender_id.clone();
+            
+            tasks.push(tauri::async_runtime::spawn(async move {
+                send_transport_payload_to_peer(
+                    n_clone,
+                    addr,
+                    sender_id_clone,
+                    token,
+                    p_clone,
+                    s_clone,
+                )
+                .await;
+            }));
         }
 
-        send_transport_payload_to_peer(
-            peer_name,
-            addr,
-            sender_id.clone(),
-            pairing_code.clone(),
-            TransportMessage::SyncText {
-                sender_id: sender_id.clone(),
-                timestamp_ms,
-                message_hash,
-                text: content.clone(),
-            },
-            state.inner().clone(),
-        )
-        .await;
-    }
+        for t in tasks {
+            let _ = tokio::time::timeout(Duration::from_secs(10), t).await;
+        }
+    });
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn push_local_image_payload(
-    image_base64: String,
-    mime_type: String,
+pub fn push_local_text_clipboard(
+    text: String,
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
-    if image_base64.trim().is_empty() || mime_type.trim().is_empty() {
-        log_backend_event_with_state(
-            state.inner(),
-            "FAILED",
-            "IMAGE_SEND_LOCAL",
-            "empty image payload or mime type",
-        );
-        return Ok(());
-    }
+    push_local_text_clipboard_impl(text, state.inner().clone())
+}
 
-    if !mime_type.starts_with("image/") {
-        log_backend_event_with_state(
-            state.inner(),
-            "FAILED",
-            "IMAGE_SEND_LOCAL",
-            &format!("invalid mime type: {}", mime_type),
-        );
-        return Ok(());
-    }
-
-    let (sender_id, pairing_code, peers, message_hash, timestamp_ms, allow_sync) = {
-        let mut s = state.lock().map_err(|e| e.to_string())?;
-        let image_bytes = estimate_base64_bytes(&image_base64);
-        let max_image_bytes = (s.settings.max_image_size_kb as usize) * 1024;
-
-        if image_bytes == 0 {
-            let event =
-                format_backend_event("FAILED", "IMAGE_SEND_LOCAL", "invalid base64 image payload");
-            log_backend(&event);
-            push_diagnostic(&mut s, event);
-            return Ok(());
-        }
-
-        if image_bytes > max_image_bytes {
-            let event = format_backend_event(
-                "FAILED",
-                "IMAGE_SEND_LOCAL",
-                &format!(
-                    "image exceeds limit size={}B limit={}B",
-                    image_bytes, max_image_bytes
-                ),
-            );
-            log_backend(&event);
-            push_diagnostic(&mut s, event);
-            return Ok(());
-        }
+pub fn push_local_image_payload_impl(
+    mime_type: String,
+    image_base64: String,
+    state_clone: SharedState,
+) -> Result<(), String> {
+    let (sender_id, targets, hash, timestamp_ms, allow_sync) = {
+        let mut s = state_clone.lock().map_err(|e| e.to_string())?;
 
         let hash = compute_image_hash(&s.device_name, &mime_type, &image_base64);
         let timestamp_ms = now_ms();
+
+        let size_kb = (image_base64.len() * 3 / 4) as u32 / 1024;
+        if size_kb > s.settings.max_image_size_kb {
+            s.sync_dropped_count += 1;
+            let event = format_backend_event(
+                "FAILED",
+                "IMAGE_SEND_LOCAL",
+                &format!("image too large ({} KB)", size_kb),
+            );
+            log_backend(&event);
+            push_diagnostic(&mut s, event);
+            return Err(format!("Image exceeds maximum size ({} KB).", size_kb));
+        }
 
         if s.recent_hashes.contains(&hash) {
             s.sync_dropped_count += 1;
@@ -222,31 +151,33 @@ pub async fn push_local_image_payload(
         }
 
         remember_hash(&mut s, hash);
-        let discovered = s
+        let targets = s
             .discovered
             .iter()
-            .filter(|(name, _)| !name.contains(&s.device_name))
-            .map(|(name, addr)| (name.clone(), addr.clone()))
-            .collect::<Vec<(String, String)>>();
+            .filter_map(|(name, addr)| {
+                s.settings.trusted_peers.get(name).map(|token| {
+                    (name.clone(), addr.clone(), token.clone())
+                })
+            })
+            .filter(|(name, _, _)| !name.contains(&s.device_name))
+            .collect::<Vec<(String, String, String)>>();
 
         (
             s.device_name.clone(),
-            s.settings.pairing_code.clone(),
-            discovered,
+            targets,
             hash,
             timestamp_ms,
             s.sync_enabled
-                && s.paired
                 && (s.is_app_foreground || s.settings.background_mode_enabled),
         )
     };
 
     if !allow_sync {
-        if let Ok(mut s) = state.lock() {
+        if let Ok(mut s) = state_clone.lock() {
             let event = format_backend_event(
                 "FAILED",
                 "IMAGE_SEND_LOCAL",
-                "blocked: app background and background mode disabled",
+                "blocked: sync disabled or backgrounded",
             );
             log_backend(&event);
             push_diagnostic(&mut s, event);
@@ -254,40 +185,96 @@ pub async fn push_local_image_payload(
         return Ok(());
     }
 
-    log_backend_event_with_state(
-        state.inner(),
-        "INFO",
-        "IMAGE_SEND_LOCAL",
-        &format!("dispatching to {} peer(s)", peers.len()),
-    );
+    let payload = TransportMessage::SyncImage {
+        sender_id: sender_id.clone(),
+        timestamp_ms,
+        message_hash: hash,
+        mime_type,
+        image_base64,
+    };
 
-    for (peer_name, addr) in peers {
-        let host = addr.split(':').next().unwrap_or_default();
-        if !is_private_or_loopback(host) {
-            set_transport_status(
-                state.inner(),
-                peer_name,
-                "skipped: non-local address".to_string(),
-            );
-            continue;
+    tauri::async_runtime::spawn(async move {
+        let mut tasks = vec![];
+        for (peer_name, addr, token) in targets {
+            let s_clone = state_clone.clone();
+            let p_clone = payload.clone();
+            let n_clone = peer_name.clone();
+            let sender_id_clone = sender_id.clone();
+            
+            tasks.push(tauri::async_runtime::spawn(async move {
+                send_transport_payload_to_peer(
+                    n_clone,
+                    addr,
+                    sender_id_clone,
+                    token,
+                    p_clone,
+                    s_clone,
+                )
+                .await;
+            }));
         }
 
-        send_transport_payload_to_peer(
-            peer_name,
-            addr,
-            sender_id.clone(),
-            pairing_code.clone(),
-            TransportMessage::SyncImage {
-                sender_id: sender_id.clone(),
-                timestamp_ms,
-                message_hash,
-                mime_type: mime_type.clone(),
-                image_base64: image_base64.clone(),
-            },
-            state.inner().clone(),
-        )
-        .await;
-    }
+        for t in tasks {
+            let _ = tokio::time::timeout(Duration::from_secs(10), t).await;
+        }
+    });
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn push_local_image_payload(
+    mime_type: String,
+    image_base64: String,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
+    push_local_image_payload_impl(mime_type, image_base64, state.inner().clone())
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[tauri::command]
+pub fn read_clipboard_text() -> Result<Option<String>, String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    match clipboard.get_text() {
+        Ok(text) => Ok(Some(text)),
+        Err(arboard::Error::ContentNotAvailable) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[tauri::command]
+pub fn write_clipboard_text(text: String) -> Result<(), String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    clipboard.set_text(text).map_err(|e| e.to_string())
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[tauri::command]
+pub fn read_clipboard_text(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    match app.clipboard().read_text() {
+        Ok(text) => {
+            if text.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(text))
+            }
+        }
+        Err(e) => {
+            let err_str = e.to_string();
+            if err_str.contains("empty") || err_str.contains("no text") || err_str.contains("not available") || err_str.contains("Null") || err_str.contains("null") {
+                Ok(None)
+            } else {
+                Err(err_str)
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+#[tauri::command]
+pub fn write_clipboard_text(app: tauri::AppHandle, text: String) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().write_text(text).map_err(|e| e.to_string())
 }
